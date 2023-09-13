@@ -464,6 +464,14 @@ class Trainer:
         n_nodes = self.data_reduced.pos.shape[0]
         device_for_loading = 'cpu'
 
+        # Populate edge_attrs
+        data_ref = self.data_reduced
+        cart = torch_geometric.transforms.Cartesian(norm=False, max_value = None, cat = False)
+        dist = torch_geometric.transforms.Distance(norm = False, max_value = None, cat = True)
+        cart(data_ref) # adds cartesian/component-wise distance
+        dist(data_ref) # adds euclidean distance
+
+        # Get dictionary 
         reduced_graph_dict = self.data_reduced.to_dict()
 
         # Create training dataset -- only 1 snapshot for demo
@@ -498,6 +506,10 @@ class Trainer:
         # No need for distributed sampler -- create standard dataset loader  
         train_loader = torch_geometric.loader.DataLoader(train_dataset, batch_size=self.cfg.batch_size, shuffle=False)
         test_loader = torch_geometric.loader.DataLoader(test_dataset, batch_size=self.cfg.test_batch_size, shuffle=False)  
+
+
+        if (RANK == 0):
+            print(data_train_list[0])
 
         return {
             'train': {
