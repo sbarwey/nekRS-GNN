@@ -1,5 +1,5 @@
 from __future__ import absolute_import, division, print_function, annotations
-from typing import Optional, Union, Callable
+from typing import Optional, Union, Callable, List
 import torch
 from torch import Tensor
 import torch.nn as nn
@@ -9,6 +9,181 @@ from torch_scatter import scatter_mean
 from torch_geometric.nn.conv import MessagePassing
 from torch_geometric.typing import Adj, OptTensor, PairTensor
 from pooling import TopKPooling_Mod, avg_pool_mod, avg_pool_mod_no_x
+import torch.distributed as dist
+import torch.distributed.nn as distnn
+
+
+class toy_gnn_distributed(torch.nn.Module):
+    """
+    Toy GNN for testing distributed backpropagation.
+    There is only one parameter: w_mp, a scalar edge weight used in edge aggregation.
+    """
+    def __init__(self):
+        super().__init__()
+        self.edge_aggregator = EdgeAggregation(aggr='add') # for edge aggregation 
+        #self.w_mp = nn.Parameter(torch.randn(1)) # GNN parameter 
+        self.w_mp = nn.Parameter(torch.tensor([0.5])) # GNN parameter 
+
+    def forward(
+            self,
+            x: Tensor,
+            edge_index: LongTensor,
+            edge_weight: Tensor,
+            halo_info: Tensor,
+            mask_send: list,
+            mask_recv: list,
+            buffer_send: Tensor,
+            buffer_recv: Tensor,
+            neighboring_procs: dict,
+            SIZE: int,
+            batch: Optional[LongTensor] = None) -> Tensor:
+
+        if batch is None:
+            batch = edge_index.new_zeros(x.size(0))
+        
+        # ~~~~ Edge update:  
+        x_own = x[edge_index[1,:], :]
+        x_nei = x[edge_index[0,:], :] 
+        ea = self.w_mp * x_nei 
+
+        # Scale by edge weights 
+        edge_weight = edge_weight.unsqueeze(1)
+        ea = ea * edge_weight
+
+        # ~~~~ Edge aggregation: sums ea using local neighborhoods 
+        edge_agg = self.edge_aggregator(x, edge_index, ea)
+        
+        if SIZE > 1:
+            # ~~~~ Halo exchange: swap the edge aggregates. This populates the halo nodes  
+            edge_agg = self.halo_swap(edge_agg, 
+                                      mask_send,
+                                      mask_recv,
+                                      buffer_send, 
+                                      buffer_recv, 
+                                      neighboring_procs, 
+                                      SIZE)
+
+            # ~~~~ Local scatter using halo nodes (use halo_info) 
+            idx_recv = halo_info[:,0]
+            idx_send = halo_info[:,1]
+            edge_agg.index_add_(0, idx_recv, edge_agg.index_select(0, idx_send))
+
+        # ~~~~ Node update (node becomes result of edge aggregation in this simple model) 
+        x = edge_agg
+        
+        return x 
+
+
+    def halo_swap(self, 
+                  input_tensor, 
+                  mask_send, 
+                  mask_recv, 
+                  buff_send, 
+                  buff_recv, 
+                  neighboring_procs, 
+                  SIZE):
+        """
+        Performs halo swap using send/receive buffers
+        """
+        if SIZE > 1:
+
+            # Fill send buffer
+            for i in neighboring_procs:
+                buff_send[i] = input_tensor[mask_send[i]]
+
+            # Update send buffer 
+            for i in range(len(buff_send)):
+                if buff_send[i] is None:
+                    buff_send[i] = torch.tensor([[0.0]])
+
+            for i in range(len(buff_recv)):
+                if buff_recv[i] is None:
+                    buff_recv[i] = torch.tensor([[0.0]])
+
+            # Perform all_to_all
+            distnn.all_to_all(buff_recv, buff_send)
+        
+            # Fill halo nodes
+            for i in neighboring_procs:
+                input_tensor[mask_recv[i]] = buff_recv[i]
+
+
+            # # OLD : 
+            # # Fill send buffer
+            # for i in neighboring_procs:
+            #     buff_send[i] = input_tensor[mask_send[i]]
+
+            # # Perform swap
+            # req_send_list = []
+            # for i in neighboring_procs:
+            #     req_send = dist.isend(tensor=buff_send[i], dst=i)
+            #     req_send_list.append(req_send)
+
+            # req_recv_list = []
+            # for i in neighboring_procs:
+            #     req_recv = dist.irecv(tensor=buff_recv[i], src=i)
+            #     req_recv_list.append(req_recv)
+
+            # for req_send in req_send_list:
+            #     req_send.wait()
+
+            # for req_recv in req_recv_list:
+            #     req_recv.wait()
+
+            # dist.barrier()
+
+            # # Fill halo nodes
+            # for i in neighboring_procs:
+            #     input_tensor[mask_recv[i]] = buff_recv[i]
+
+
+        return input_tensor
+
+    def input_dict(self) -> dict:
+        a = {}
+        return a
+
+
+
+
+class toy_gnn(torch.nn.Module):
+    """
+    Toy GNN for testing distributed backpropagation.
+    There is only one parameter: w_mp, a scalar edge weight used in edge aggregation.
+    """
+    def __init__(self):
+        super().__init__()
+        self.edge_aggregator = EdgeAggregation(aggr='add') # for edge aggregation 
+        #self.w_mp = nn.Parameter(torch.randn(1)) # GNN parameter 
+        self.w_mp = nn.Parameter(torch.tensor([0.5])) # GNN parameter 
+
+    def forward(
+            self,
+            x: Tensor,
+            edge_index: LongTensor,
+            edge_attr: Tensor,
+            pos: Tensor,
+            batch: Optional[LongTensor] = None) -> Tensor:
+
+        if batch is None:
+            batch = edge_index.new_zeros(x.size(0))
+        
+        # ~~~~ Edge update:  
+        x_nei = x[edge_index[0,:], :] 
+        ea = self.w_mp * x_nei 
+
+        # ~~~~ Edge aggregation: sums ea 
+        edge_agg = self.edge_aggregator(x, edge_index, ea)
+
+        # ~~~~ Node update (node becomes result of edge aggregation in this simple model) 
+        x = edge_agg
+        
+        return x 
+
+    def input_dict(self) -> dict:
+        a = {}
+        return a
+
 
 class mp_gnn(torch.nn.Module):
     def __init__(self, 
