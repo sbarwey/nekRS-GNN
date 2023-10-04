@@ -94,11 +94,11 @@ class toy_gnn_distributed(torch.nn.Module):
             # Update send buffer 
             for i in range(len(buff_send)):
                 if buff_send[i] is None:
-                    buff_send[i] = torch.tensor([[0.0]])
+                    buff_send[i] = torch.tensor([[0.0]], device=input_tensor.device)
 
             for i in range(len(buff_recv)):
                 if buff_recv[i] is None:
-                    buff_recv[i] = torch.tensor([[0.0]])
+                    buff_recv[i] = torch.tensor([[0.0]], device=input_tensor.device)
 
             # Perform all_to_all
             distnn.all_to_all(buff_recv, buff_send)

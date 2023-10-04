@@ -745,6 +745,8 @@ class Trainer:
         if WITH_CUDA:
             data.x = data.x.cuda() 
             data.edge_index = data.edge_index.cuda()
+            data.edge_weight = data.edge_weight.cuda()
+            data.halo_info = data.halo_info.cuda()
             data.edge_attr = data.edge_attr.cuda()
             data.pos = data.pos.cuda()
             data.batch = data.batch.cuda()
