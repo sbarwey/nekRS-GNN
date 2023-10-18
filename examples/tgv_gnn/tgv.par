@@ -8,7 +8,7 @@ cubaturePolynomialOrder = 9
 #endTime = 20
 
 stopAt = numSteps
-numSteps = 10
+numSteps = 0
 
 timeStepper = tombo3
 dt = 3e-3

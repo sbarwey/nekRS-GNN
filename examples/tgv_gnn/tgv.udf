@@ -94,6 +94,7 @@ void UDF_Setup(nrs_t *nrs)
     graph = new gnn_t(nrs);
     graph->gnnSetup();
     graph->gnnWrite();
+    delete graph;
 
     // set IC
     mesh_t *mesh = nrs->meshV;
@@ -130,15 +131,17 @@ void UDF_ExecuteStep(nrs_t *nrs, dfloat time, int tstep)
 {
     printDiagnostics(nrs, time, tstep);
 
-    if (nrs->isOutputStep) 
+
+
+    // Un-comment the following block if you want to write flow field from restart file to disk
+    // To do this, set numSteps to 0 in the par file.
+    int numSteps = -1; 
+    platform->options.getArgs("NUMBER TIMESTEPS", numSteps);
+    if (numSteps == 0)
     {
         nek::ocopyToNek(time, tstep);
-        nek::userchk();
-    }
 
-    if (nrs->lastStep)
-    {
-        // write flowfield 
+        // Write flowfield 
         int rank, size; 
         MPI_Comm_rank(platform->comm.mpiComm, &rank);
         MPI_Comm_size(platform->comm.mpiComm, &size);
@@ -146,8 +149,18 @@ void UDF_ExecuteStep(nrs_t *nrs, dfloat time, int tstep)
         dlong n_nodes = nrs->meshV->Np * nrs->meshV->Nelements; 
         std::string irank = "_rank_" + std::to_string(rank);
         std::string nranks = "_size_" + std::to_string(size); 
-        writeToFile("gnn_outputs/x" + irank + nranks, nrs->U, n_nodes, 3);
-        writeToFile("gnn_outputs/y" + irank + nranks, nrs->P, n_nodes, 1);
-        delete graph;
+        writeToFile("gnn_outputs/u" + irank + nranks, nrs->U, n_nodes, 3);
+        writeToFile("gnn_outputs/p" + irank + nranks, nrs->P, n_nodes, 1);
+    }
+
+    if (nrs->isOutputStep) 
+    {
+        nek::ocopyToNek(time, tstep);
+        nek::userchk();
+    }
+    
+    if (nrs->lastStep)
+    {
+
     }
 }

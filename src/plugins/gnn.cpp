@@ -42,9 +42,11 @@ gnn_t::gnn_t(nrs_t *nrs_)
     // allocate memory 
     dlong N = mesh->Nelements * mesh->Np; // total number of nodes
     pos_node = new dfloat[N * 3](); 
+    node_element_ids = new dlong[N]();
     local_unique_mask = new dlong[N](); 
     halo_unique_mask = new dlong[N]();
-    graphNodes = (graphNode_t*) calloc(N, sizeof(graphNode_t));
+    graphNodes = (graphNode_t*) calloc(N, sizeof(graphNode_t)); // full domain
+    graphNodes_element = (graphNode_t*) calloc(mesh->Np, sizeof(graphNode_t)); // a single element
 
     if (verbose) printf("\n[RANK %d] -- Finished instantiating gnn_t object\n", rank);
     if (verbose) printf("[RANK %d] -- The number of elements is %d \n", rank, mesh->Nelements);
@@ -54,18 +56,22 @@ gnn_t::~gnn_t()
 {
     if (verbose) printf("[RANK %d] -- gnn_t destructor\n", rank);
     delete[] pos_node;
+    delete[] node_element_ids;
     delete[] local_unique_mask;
     delete[] halo_unique_mask;
     free(localNodes);
     free(haloNodes);
     free(graphNodes);
+    free(graphNodes_element);
 }
 
 void gnn_t::gnnSetup()
 {
     if (verbose) printf("[RANK %d] -- in gnnSetup() \n", rank);
-    get_graph_nodes();
+    get_graph_nodes(); // populates graphNodes
+    get_graph_nodes_element(); // populates graphNodes_element
     get_node_positions();
+    get_node_element_ids(); // adds neighboring edges to graphNodes
     get_node_masks();
 
     // output directory 
@@ -74,7 +80,8 @@ void gnn_t::gnnSetup()
         std::filesystem::path currentPath = std::filesystem::current_path();
         currentPath /= "gnn_outputs";
         writePath = currentPath.string();
-
+        int poly_order = mesh->Nq - 1; 
+        writePath = writePath + "_poly_" + std::to_string(poly_order);
         if (rank == 0)
         {
             if (!std::filesystem::exists(writePath))
@@ -94,7 +101,9 @@ void gnn_t::gnnWrite()
     std::string irank = "_rank_" + std::to_string(rank);
     std::string nranks = "_size_" + std::to_string(size);
     write_edge_index(writePath + "/edge_index" + irank + nranks);
+    write_edge_index_element_local(writePath + "/edge_index_element_local" + irank + nranks);
     writeToFile(writePath + "/pos_node" + irank + nranks, pos_node, N, 3);
+    writeToFile(writePath + "/node_element_ids" + irank + nranks, node_element_ids, N, 1); 
     writeToFile(writePath + "/local_unique_mask" + irank + nranks, local_unique_mask, N, 1); 
     writeToFile(writePath + "/halo_unique_mask" + irank + nranks, halo_unique_mask, N, 1); 
     writeToFile(writePath + "/global_ids" + irank + nranks, mesh->globalIds, N, 1);
@@ -111,6 +120,19 @@ void gnn_t::get_node_positions()
         pos_node[n + 0*(mesh->Np * mesh->Nelements)] = x;
         pos_node[n + 1*(mesh->Np * mesh->Nelements)] = y;
         pos_node[n + 2*(mesh->Np * mesh->Nelements)] = z;
+    }
+}
+
+void gnn_t::get_node_element_ids()
+{
+    if (verbose) printf("[RANK %d] -- in get_node_element_ids() \n", rank);
+    dlong N = mesh->Nelements * mesh->Np; // total number of nodes 
+    for (int e = 0; e < mesh->Nelements; e++) // loop through the element 
+    {
+        for (int i = 0; i < mesh->Np; i++) // loop through the gll nodes 
+        {
+            node_element_ids[e * mesh->Np + i] = e;
+        } 
     }
 }
 
@@ -467,3 +489,29 @@ void gnn_t::write_edge_index(const std::string& filename)
         }
     }           
 }
+
+void gnn_t::write_edge_index_element_local(const std::string& filename)
+{
+    if (verbose) printf("[RANK %d] -- in write_edge_index_element_local() \n", rank);
+
+    std::cout << "Writing file: " << filename << std::endl;
+    std::ofstream file_cpu(filename);
+    if (!file_cpu.is_open())
+    {
+        std::cout << "Error opening file." << std::endl;
+        exit(1);
+    }
+
+    // loop through graph nodes
+    for (int i = 0; i < mesh->Np; i++)
+    {               
+        int num_nbr = graphNodes_element[i].nbrIds.size();
+        dlong idx_own = graphNodes_element[i].localId; 
+                    
+        for (int j = 0; j < num_nbr; j++)
+        {           
+            dlong idx_nei = graphNodes_element[i].nbrIds[j];  
+            file_cpu << idx_nei << '\t' << idx_own << '\n'; 
+        }
+    }           
+} 

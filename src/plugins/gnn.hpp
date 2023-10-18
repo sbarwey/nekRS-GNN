@@ -33,6 +33,9 @@ public:
     void gnnSetup();
     void gnnWrite();
 
+    // where gnn output files are written, if "write=True". 
+    std::string writePath;
+
 private:
     // nekrs objects 
     nrs_t *nrs;
@@ -41,6 +44,7 @@ private:
 
     // allocated in constructor 
     dfloat *pos_node; 
+    dlong *node_element_ids;
     dlong *local_unique_mask;
     dlong *halo_unique_mask;
 
@@ -48,6 +52,7 @@ private:
     parallelNode_t *localNodes;
     parallelNode_t *haloNodes;
     graphNode_t *graphNodes; 
+    graphNode_t *graphNodes_element;
 
     // MPI stuff 
     int rank;
@@ -58,18 +63,20 @@ private:
 
     // member functions 
     void get_graph_nodes();
+    void get_graph_nodes_element();
     void get_global_node_index();
     void get_node_positions();
+    void get_node_element_ids();
     void get_node_masks();
     void get_edge_index();
     void write_edge_index(const std::string& filename);
+    void write_edge_index_element_local(const std::string& filename);
 
     // for prints 
     bool verbose = true; 
 
     // for writing 
     bool write = true;
-    std::string writePath;
 };
 
 #endif
