@@ -34,8 +34,8 @@ class toy_gnn_distributed(torch.nn.Module):
             mask_recv: list,
             buffer_send: Tensor,
             buffer_recv: Tensor,
-            neighboring_procs: dict,
-            SIZE: int,
+            neighboring_procs: Tensor,
+            SIZE: Tensor,
             batch: Optional[LongTensor] = None) -> Tensor:
 
         if batch is None:
@@ -93,11 +93,13 @@ class toy_gnn_distributed(torch.nn.Module):
 
             # Update send buffer 
             for i in range(len(buff_send)):
-                if buff_send[i] is None:
+                #if buff_send[i] is None:
+                if len(buff_send[i]) == 0:
                     buff_send[i] = torch.tensor([[0.0]], device=input_tensor.device)
 
             for i in range(len(buff_recv)):
-                if buff_recv[i] is None:
+                #if buff_recv[i] is None:
+                if len(buff_recv[i]) == 0:
                     buff_recv[i] = torch.tensor([[0.0]], device=input_tensor.device)
 
             # Perform all_to_all

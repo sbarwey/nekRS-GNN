@@ -46,10 +46,16 @@ import graph_plotting as gplot
 # Clean printing
 from prettytable import PrettyTable 
 
+# tensorboard 
+from torch.utils.tensorboard import SummaryWriter
+
+# torchvis 
+from torchviz import make_dot
+
 
 log = logging.getLogger(__name__)
 
-TORCH_DTYPE = torch.float32
+TORCH_FLOAT_DTYPE = torch.float32
 
 # Get MPI:
 try:
@@ -142,7 +148,7 @@ class Trainer:
         self.data_reduced, self.data_full, self.idx_full2reduced, self.idx_reduced2full = self.setup_local_graph()
 
         # ~~~~ Setup halo nodes 
-        self.neighboring_procs = {}
+        self.neighboring_procs = []
         self.setup_halo()
 
         # ~~~~ Setup data 
@@ -212,8 +218,8 @@ class Trainer:
                 self.loss_hist_test = loss_hist_test_new
 
         # ~~~~ Wrap model in DDP
-        # if WITH_DDP and SIZE > 1:
-        #     self.model = DDP(self.model)
+        if WITH_DDP and SIZE > 1:
+            self.model = DDP(self.model)
 
         # ~~~~ Set loss function
         self.loss_fn = nn.MSELoss()
@@ -331,8 +337,12 @@ class Trainer:
         """
         Builds index masks for facilitating halo swap of nodes 
         """
-        mask_send = [None] * SIZE
-        mask_recv = [None] * SIZE
+        mask_send = [torch.tensor([])] * SIZE
+        mask_recv = [torch.tensor([])] * SIZE
+
+        #mask_send = [None] * SIZE
+        #mask_recv = [None] * SIZE
+
         if SIZE > 1: 
             #n_nodes_local = self.data.n_nodes_internal + self.data.n_nodes_halo
             halo_info = self.data['train']['example'].halo_info
@@ -352,8 +362,12 @@ class Trainer:
         return mask_send, mask_recv 
 
     def build_buffers(self, n_features):
-        buff_send = [None] * SIZE
-        buff_recv = [None] * SIZE
+        buff_send = [torch.tensor([])] * SIZE
+        buff_recv = [torch.tensor([])] * SIZE
+
+        # buff_send = [None] * SIZE
+        # buff_recv = [None] * SIZE
+
         if SIZE > 1: 
             for i in self.neighboring_procs:
                 buff_send[i] = torch.empty([len(self.mask_send[i]), n_features], dtype=torch.float32, device=DEVICE_ID) 
@@ -500,16 +514,23 @@ class Trainer:
         edge_freq = torch.tensor(np.load(path_to_ew))
         self.data_reduced.edge_weight = 1.0/edge_freq
 
+        # Read in node degree
+        path_to_node_degree = main_path + 'node_degree_rank_%d_size_%d.npy' %(RANK,SIZE)
+        node_degree = torch.tensor(np.load(path_to_node_degree))
+        self.data_reduced.node_degree = node_degree
+
         # Add halo nodes by appending the end of the node arrays  
         n_nodes_halo = self.data_reduced.n_nodes_halo 
         n_features_x = data_x_reduced.shape[1]
-        data_x_halo = torch.zeros((n_nodes_halo, n_features_x), dtype=TORCH_DTYPE) 
+        data_x_halo = torch.zeros((n_nodes_halo, n_features_x), dtype=TORCH_FLOAT_DTYPE) 
 
         n_features_y = data_y_reduced.shape[1]
-        data_y_halo = torch.zeros((n_nodes_halo, n_features_y), dtype=TORCH_DTYPE)
+        data_y_halo = torch.zeros((n_nodes_halo, n_features_y), dtype=TORCH_FLOAT_DTYPE)
 
         n_features_pos = pos_reduced.shape[1]
-        pos_halo = torch.zeros((n_nodes_halo, n_features_pos), dtype=TORCH_DTYPE)
+        pos_halo = torch.zeros((n_nodes_halo, n_features_pos), dtype=TORCH_FLOAT_DTYPE)
+
+        node_degree_halo = torch.zeros((n_nodes_halo), dtype=TORCH_FLOAT_DTYPE)
 
         # Add self-edges for halo nodes (unused) 
         n_nodes_local = self.data_reduced.n_nodes_local
@@ -546,6 +567,7 @@ class Trainer:
         data_temp.x = torch.cat((data_temp.x, data_x_halo), dim=0)
         data_temp.y = torch.cat((data_temp.y, data_y_halo), dim=0)
         data_temp.pos = torch.cat((data_temp.pos, pos_halo), dim=0)
+        data_temp.node_degree = torch.cat((data_temp.node_degree, node_degree_halo), dim=0)
         data_temp.edge_index = torch.cat((data_temp.edge_index, edge_index_halo), dim=1)
         data_temp.edge_weight = torch.cat((data_temp.edge_weight, edge_weight_halo), dim=0)
 
@@ -564,6 +586,7 @@ class Trainer:
         data_temp.x = torch.cat((data_temp.x, data_x_halo), dim=0)
         data_temp.y = torch.cat((data_temp.y, data_y_halo), dim=0)
         data_temp.pos = torch.cat((data_temp.pos, pos_halo), dim=0)
+        data_temp.node_degree = torch.cat((data_temp.node_degree, node_degree_halo), dim=0)
         data_temp.edge_index = torch.cat((data_temp.edge_index, edge_index_halo), dim=1)
         data_temp.edge_weight = torch.cat((data_temp.edge_weight, edge_weight_halo), dim=0)
 
@@ -749,6 +772,7 @@ class Trainer:
             data.halo_info = data.halo_info.cuda()
             data.edge_attr = data.edge_attr.cuda()
             data.pos = data.pos.cuda()
+            data.node_degree = data.node_degree.cuda()
             data.batch = data.batch.cuda()
             loss = loss.cuda()
         
@@ -756,6 +780,8 @@ class Trainer:
 
         # Prediction 
         #out_gnn = self.model(data.x, data.edge_index, data.edge_attr, data.pos, data.batch)
+
+        self.neighboring_procs = torch.tensor(self.neighboring_procs)
 
         out_gnn = self.model(x = data.x, 
                              edge_index = data.edge_index,
@@ -766,7 +792,7 @@ class Trainer:
                              buffer_send = self.buffer_send,
                              buffer_recv = self.buffer_recv,
                              neighboring_procs = self.neighboring_procs, 
-                             SIZE = SIZE
+                             SIZE = torch.tensor(SIZE)
                              )
         
         try:
@@ -783,39 +809,59 @@ class Trainer:
         if WITH_CUDA:
             target = target.cuda()
 
-        # Toy loss: evaluate only at the central node  
-        # Get the index of global id = 2 
-        gid_loss = 2 
-        idx_loss = data.global_ids == gid_loss
-        n_nodes_local = data.n_nodes_local
-        loss = 0.5*self.loss_fn(out_gnn[:n_nodes_local][idx_loss], target[:n_nodes_local][idx_loss]) # Loss = (x_B - y_B)^2
-
-        # # Toy loss: evaluate at all of the nodes 
+        # # Toy loss: evaluate only at the central node  
+        # # Get the index of global id = 2 
+        # gid_loss = 2 
+        # idx_loss = data.global_ids == gid_loss
         # n_nodes_local = data.n_nodes_local
-        # loss = self.loss_fn(out_gnn[:n_nodes_local], target[:n_nodes_local])
+        # loss = 0.5*self.loss_fn(out_gnn[:n_nodes_local][idx_loss], target[:n_nodes_local][idx_loss]) # Loss = (x_B - y_B)^2
+
+        # Toy loss: evaluate at all of the nodes 
+        n_nodes_local = data.n_nodes_local
+        print('[RANK %d] Output_local:' %(RANK), out_gnn[:n_nodes_local])
+        print('[RANK %d] Node degree: ' %(RANK), data.node_degree[:n_nodes_local])
+        print('[RANK %d] global id: ' %(RANK), data.global_ids[:n_nodes_local])
+
+        if SIZE == 1:
+            loss = self.loss_fn(out_gnn[:n_nodes_local], target[:n_nodes_local])
+        else: # custom 
+            squared_errors_local = torch.pow(out_gnn[:n_nodes_local] - target[:n_nodes_local], 2)
+            squared_errors_local = squared_errors_local/data.node_degree[:n_nodes_local].unsqueeze(-1)
+            print('[RANK %d] squared_errors_local shape: ' %(RANK), squared_errors_local.shape)
+
+            sum_squared_errors_local = squared_errors_local.sum()
+            effective_nodes_local = torch.sum(1.0/data.node_degree[:n_nodes_local])
+
+            print('[RANK %d] sum_squared_errors_local: ' %(RANK), sum_squared_errors_local)
+            print('[RANK %d] effective_nodes_local: ' %(RANK), effective_nodes_local)
+
+            effective_nodes = distnn.all_reduce(effective_nodes_local)
+            sum_squared_errors = distnn.all_reduce(sum_squared_errors_local)
+            loss = (1.0/effective_nodes) * sum_squared_errors
+
 
         print('[RANK %d] Loss: ' %(RANK), loss.item())
-
+        
         loss.backward()
         #self.optimizer.step()
 
         # Print the backward gradient   
         print('[RANK %d] w_grad_torch: ' %(RANK), w_mp.grad)
 
-        # Compute the manual gradient, using contribution only from node 2  
-        w_manual = torch.tensor(w_mp.item())
-        w_grad_manual = None
-        if SIZE == 1:
-            w_grad_manual = -(data.y[1] - (w_manual * data.x[0] + w_manual * data.x[2])) * (data.x[0] + data.x[2])
-        else:
-            x_in = [14.3, 10.1, 13.2]
-            y_target = [3.43, 12.4, 2.23]
-            w_manual = 0.5 
-            y_tilde = w_manual * x_in[0] + w_manual * x_in[2]
-            w_grad_manual = -(y_target[1] - y_tilde) * ( (x_in[0] + x_in[2]) )
-            
-            w_grad_manual = -(y_target[1] - y_tilde) * ( (x_in[0]) ) # half of what rank 0 sees 
-            #w_grad_manual = -(y_target[1] - y_tilde) * ( (x_in[2]) ) # half of what rank 1 sees 
+        # # Compute the manual gradient, using contribution only from node 2  
+        # w_manual = torch.tensor(w_mp.item())
+        # w_grad_manual = None
+        # if SIZE == 1:
+        #     w_grad_manual = -(data.y[1] - (w_manual * data.x[0] + w_manual * data.x[2])) * (data.x[0] + data.x[2])
+        # else:
+        #     x_in = [14.3, 10.1, 13.2]
+        #     y_target = [3.43, 12.4, 2.23]
+        #     w_manual = 0.5 
+        #     y_tilde = w_manual * x_in[0] + w_manual * x_in[2]
+        #     w_grad_manual = -(y_target[1] - y_tilde) * ( (x_in[0] + x_in[2]) )
+        #     
+        #     #w_grad_manual = -(y_target[1] - y_tilde) * ( (x_in[0]) ) # half of what rank 0 sees 
+        #     #w_grad_manual = -(y_target[1] - y_tilde) * ( (x_in[2]) ) # half of what rank 1 sees 
 
 
         # # Compute the manual gradient, taking into account all nodes 
@@ -870,7 +916,7 @@ class Trainer:
         #         w_grad_manual = (1.0/2.0)*(w_grad_2 + w_grad_3)
 
 
-        print('[RANK %d] w_grad_manual: ' %(RANK), w_grad_manual)
+        # print('[RANK %d] w_grad_manual: ' %(RANK), w_grad_manual)
 
 
         force_abort()
@@ -1174,11 +1220,12 @@ def halo_test(cfg: DictConfig) -> None:
             buffer_send[i] = sample.x[mask_send[i]]
 
         for i in range(len(buffer_send)):
-            if buffer_send[i] is None:
+            #if buffer_send[i] is None:
+            if len(buffer_send[i]) == 0:
                 buffer_send[i] = torch.tensor([[0.0]])
 
         for i in range(len(buffer_recv)):
-            if buffer_recv[i] is None:
+            if len(buffer_recv[i]) == 0:
                 buffer_recv[i] = torch.tensor([[0.0]])
 
         print('[RANK = %d] buffer_send: ' %(RANK), buffer_send)
