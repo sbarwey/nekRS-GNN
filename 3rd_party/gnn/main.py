@@ -119,6 +119,7 @@ def cleanup():
     dist.destroy_process_group()
 
 def force_abort():
+    time.sleep(2)
     if WITH_DDP:
         COMM.Abort()
     else:
@@ -164,8 +165,8 @@ class Trainer:
         self.mask_send, self.mask_recv = self.build_masks()
 
         # ~~~~ Initialize send/recv buffers on device (if applicable)
-        n_features_x = self.data['train']['example'].x.shape[1]
-        self.buffer_send, self.buffer_recv = self.build_buffers(n_features_x)
+        self.hidden_channels = 32
+        self.buffer_send, self.buffer_recv = self.build_buffers(self.hidden_channels)
 
         # ~~~~ # # ~~~~ Do a halo swap on position matrices 
         # ~~~~ # #if RANK == 1: 
@@ -248,11 +249,11 @@ class Trainer:
         # Sort by global ids 
         _, idx_sort = torch.sort(global_ids)
 
-
+        
         values_list = values_tensor[idx_sort].tolist()
         integers_list = global_ids[idx_sort].tolist()
 
-        if len(values_list) != len(integers_list):
+        if values_tensor.shape[0] != len(global_ids):
             raise ValueError("The tensor being printed is not the same size as global_ids. Input only the local nodes.")
 
         table = PrettyTable(['[RANK %d, SIZE %d] %s' %(RANK,SIZE,name_tensor), 'Global IDs'])
@@ -263,23 +264,23 @@ class Trainer:
         return
 
     def build_model(self) -> nn.Module:
-        # ~~~~ Actual model: 
-        # sample = self.data['train']['example']
-        # input_channels = sample.x.shape[1] 
-        # output_channels = sample.y.shape[1]
-        # hidden_channels = 16
-        # n_mlp_layers = [2, 3, 3] #[encoder/decoder layers, edge update layers, node update layers] 
-        # activation = F.elu
-        # 
-        # model = gnn.mp_gnn(input_channels, 
-        #                    hidden_channels, 
-        #                    output_channels, 
-        #                    n_mlp_layers, 
-        #                    activation)
-
         # ~~~~ Toy model 
         #model = gnn.toy_gnn()
-        model = gnn.toy_gnn_distributed()
+        #model = gnn.toy_gnn_distributed()
+
+        # ~~~~ Actual model 
+        sample = self.data['train']['example'] 
+        model = gnn.mp_gnn_distributed(input_channels = sample.x.shape[1], 
+                           hidden_channels = self.hidden_channels,
+                           output_channels = sample.y.shape[1],
+                           n_mlp_layers = [3,3,3], 
+                           n_messagePassing_layers = 5,
+                           activation = F.elu,
+                           halo_swap_mode = 'all_to_all', 
+                           #halo_swap_mode = 'sendrecv', 
+                           #halo_swap_mode = 'none', 
+                           name = 'RANK_%d_SIZE_%d' %(RANK,SIZE))
+        
         return model
 
     def build_optimizer(self, model: nn.Module) -> torch.optim.Optimizer:
@@ -355,23 +356,34 @@ class Trainer:
                 # index of nodes to receive from proc i  
                 mask_recv[i] = halo_info[:,1][idx_i]
 
-
-            #print('[RANK %d] mask_send: ' %(RANK), mask_send)
-            #print('[RANK %d] mask_recv: ' %(RANK), mask_recv)
-
+                if len(mask_send[i]) != len(mask_recv[i]): 
+                    log.info('For neighbor rank %d, the number of send nodes and the number of receive nodes do not match. Check to make sure graph is partitioned correctly.' %(i))
+                    force_abort()
         return mask_send, mask_recv 
 
     def build_buffers(self, n_features):
         buff_send = [torch.tensor([])] * SIZE
         buff_recv = [torch.tensor([])] * SIZE
-
-        # buff_send = [None] * SIZE
-        # buff_recv = [None] * SIZE
-
+        
         if SIZE > 1: 
+
+            # Get the maximum number of nodes that will be exchanged (required for all_to_all based halo swap)
+            n_nodes_to_exchange = torch.zeros(SIZE)
             for i in self.neighboring_procs:
-                buff_send[i] = torch.empty([len(self.mask_send[i]), n_features], dtype=torch.float32, device=DEVICE_ID) 
-                buff_recv[i] = torch.empty([len(self.mask_recv[i]), n_features], dtype=torch.float32, device=DEVICE_ID)
+                n_nodes_to_exchange[i] = len(self.mask_send[i])
+            n_max = n_nodes_to_exchange.max()
+            dist.all_reduce(n_max, op=dist.ReduceOp.MAX)
+            n_max = int(n_max)
+
+            # fill the buffers 
+            for i in range(SIZE): 
+                buff_send[i] = torch.empty([n_max, n_features], dtype=torch.float32, device=DEVICE_ID) 
+                buff_recv[i] = torch.empty([n_max, n_features], dtype=torch.float32, device=DEVICE_ID)
+
+            #for i in self.neighboring_procs:
+            #    buff_send[i] = torch.empty([len(self.mask_send[i]), n_features], dtype=torch.float32, device=DEVICE_ID) 
+            #    buff_recv[i] = torch.empty([len(self.mask_recv[i]), n_features], dtype=torch.float32, device=DEVICE_ID)
+
         return buff_send, buff_recv 
 
     def gather_node_tensor(self, input_tensor, dst=0, dtype=torch.float32):
@@ -499,9 +511,10 @@ class Trainer:
         """
         # Load data 
         main_path = self.cfg.gnn_outputs_path
-        path_to_x = main_path + 'x_rank_%d_size_%d' %(RANK,SIZE)
-        path_to_y = main_path + 'y_rank_%d_size_%d' %(RANK,SIZE)
-        data_x = np.loadtxt(path_to_x, ndmin=2, dtype=np.float32)
+        path_to_x = main_path + 'fld_u_rank_%d_size_%d' %(RANK,SIZE)
+        #path_to_y = main_path + 'fld_p_rank_%d_size_%d' %(RANK,SIZE)
+        path_to_y = main_path + 'fld_u_rank_%d_size_%d' %(RANK,SIZE)
+        data_x = np.loadtxt(path_to_x, ndmin=2, dtype=np.float32) #[:,0:1]
         data_y = np.loadtxt(path_to_y, ndmin=2, dtype=np.float32) 
 
         # Get data in reduced format (non-overlapping)
@@ -693,6 +706,7 @@ class Trainer:
         
         if WITH_CUDA:
             data.x = data.x.cuda() 
+            data.y = data.y.cuda()
             data.edge_index = data.edge_index.cuda()
             data.edge_weight = data.edge_weight.cuda()
             data.edge_attr = data.edge_attr.cuda()
@@ -701,7 +715,10 @@ class Trainer:
             loss = loss.cuda()
         
         self.optimizer.zero_grad()
-
+        
+        print('[RANK %d] input: data.x.shape: ' %(RANK), data.x.shape)
+        print('[RANK %d] target: data.y.shape: ' %(RANK), data.y.shape)
+        
         # Prediction 
         out_gnn = self.model(x = data.x, 
                              edge_index = data.edge_index,
@@ -716,10 +733,7 @@ class Trainer:
                              )
         
 
-        print('[RANK %d] test: ' %(RANK), out_gnn.grad_fn)
-        force_abort()
-        
-        self.print_node_attribute(out_gnn[:data.n_nodes_local], 'out_gnn')
+        #self.print_node_attribute(out_gnn[:data.n_nodes_local], 'out_gnn')
 
         # Print 
         try:
@@ -734,30 +748,49 @@ class Trainer:
 
         # Accumulate loss
         target = data.y
-        if WITH_CUDA:
-            target = target.cuda()
 
-        print('w_mp:', w_mp)
+        # # Toy loss: evaluate only at the central node  
+        # # Get the index of global id = 2 
+        # gid_loss = 14 # degree = 8 (for size = 8) 
+        # #gid_loss = 11 # degree = 4 (for size = 8)
+        # #gid_loss = 19 # degree = 1 (for size = 8)
+        # idx_loss = data.global_ids == gid_loss
+        # n_nodes_local = data.n_nodes_local
+        # loss = 0.5*self.loss_fn(out_gnn[:n_nodes_local][idx_loss], target[:n_nodes_local][idx_loss]) # Loss = (x_B - y_B)^2
+        # #loss = self.loss_fn(out_gnn[:n_nodes_local], target[:n_nodes_local]) # Loss = (x_B - y_B)^2
 
-
-        # Toy loss: evaluate only at the central node  
-        # Get the index of global id = 2 
-        gid_loss = 14 # degree = 8 (for size = 8) 
-        #gid_loss = 11 # degree = 4 (for size = 8)
-        #gid_loss = 19 # degree = 1 (for size = 8)
-        idx_loss = data.global_ids == gid_loss
+        # Toy loss: evaluate at all of the nodes 
         n_nodes_local = data.n_nodes_local
-        loss = 0.5*self.loss_fn(out_gnn[:n_nodes_local][idx_loss], target[:n_nodes_local][idx_loss]) # Loss = (x_B - y_B)^2
-        #loss = self.loss_fn(out_gnn[:n_nodes_local], target[:n_nodes_local]) # Loss = (x_B - y_B)^2
+        #print('[RANK %d] Output_local:' %(RANK), out_gnn[:n_nodes_local])
+        #print('[RANK %d] Node degree: ' %(RANK), data.node_degree[:n_nodes_local])
+        #print('[RANK %d] global id: ' %(RANK), data.global_ids[:n_nodes_local])
 
-        print('[RANK %d] Loss: ' %(RANK), loss.item())
+        if SIZE == 1:
+            loss = self.loss_fn(out_gnn[:n_nodes_local], target[:n_nodes_local])
+        else: # custom 
+            squared_errors_local = torch.pow(out_gnn[:n_nodes_local] - target[:n_nodes_local], 2)
+            squared_errors_local = squared_errors_local/data.node_degree[:n_nodes_local].unsqueeze(-1)
+            print('[RANK %d] squared_errors_local shape: ' %(RANK), squared_errors_local.shape)
+
+            sum_squared_errors_local = squared_errors_local.sum()
+            effective_nodes_local = torch.sum(1.0/data.node_degree[:n_nodes_local])
+
+            print('[RANK %d] sum_squared_errors_local: ' %(RANK), sum_squared_errors_local)
+            print('[RANK %d] effective_nodes_local: ' %(RANK), effective_nodes_local)
+
+            effective_nodes = distnn.all_reduce(effective_nodes_local)
+            sum_squared_errors = distnn.all_reduce(sum_squared_errors_local)
+            loss = (1.0/effective_nodes) * sum_squared_errors
+
+        print('[RANK %d] Loss: ' %(RANK), format(loss.item(), ".6g"))
 
         loss.backward()
         #self.optimizer.step()
 
         # Print the backward gradient   
-        print('[RANK %d] w_grad_torch: ' %(RANK), w_mp.grad.item())
+        print('[RANK %d] w_grad_torch: ' %(RANK), w_mp.grad)
 
+        force_abort()
         
         return loss 
 
@@ -800,9 +833,9 @@ class Trainer:
         except: 
             w_mp = self.model.w_mp
 
-        print('\n\n[RANK %d] Input:' %(RANK), data.x)
+        #print('\n\n[RANK %d] Input:' %(RANK), data.x)
         #print('[RANK %d] Weight:' %(RANK), w_mp)
-        print('[RANK %d] Output:' %(RANK), out_gnn)
+        #print('[RANK %d] Output:' %(RANK), out_gnn)
 
         # Accumulate loss
         target = data.y
@@ -818,29 +851,29 @@ class Trainer:
 
         # Toy loss: evaluate at all of the nodes 
         n_nodes_local = data.n_nodes_local
-        print('[RANK %d] Output_local:' %(RANK), out_gnn[:n_nodes_local])
-        print('[RANK %d] Node degree: ' %(RANK), data.node_degree[:n_nodes_local])
-        print('[RANK %d] global id: ' %(RANK), data.global_ids[:n_nodes_local])
+        #print('[RANK %d] Output_local:' %(RANK), out_gnn[:n_nodes_local])
+        #print('[RANK %d] Node degree: ' %(RANK), data.node_degree[:n_nodes_local])
+        #print('[RANK %d] global id: ' %(RANK), data.global_ids[:n_nodes_local])
 
         if SIZE == 1:
             loss = self.loss_fn(out_gnn[:n_nodes_local], target[:n_nodes_local])
         else: # custom 
             squared_errors_local = torch.pow(out_gnn[:n_nodes_local] - target[:n_nodes_local], 2)
             squared_errors_local = squared_errors_local/data.node_degree[:n_nodes_local].unsqueeze(-1)
-            print('[RANK %d] squared_errors_local shape: ' %(RANK), squared_errors_local.shape)
+            #print('[RANK %d] squared_errors_local shape: ' %(RANK), squared_errors_local.shape)
 
             sum_squared_errors_local = squared_errors_local.sum()
             effective_nodes_local = torch.sum(1.0/data.node_degree[:n_nodes_local])
 
-            print('[RANK %d] sum_squared_errors_local: ' %(RANK), sum_squared_errors_local)
-            print('[RANK %d] effective_nodes_local: ' %(RANK), effective_nodes_local)
+            #print('[RANK %d] sum_squared_errors_local: ' %(RANK), sum_squared_errors_local)
+            #print('[RANK %d] effective_nodes_local: ' %(RANK), effective_nodes_local)
 
             effective_nodes = distnn.all_reduce(effective_nodes_local)
             sum_squared_errors = distnn.all_reduce(sum_squared_errors_local)
             loss = (1.0/effective_nodes) * sum_squared_errors
 
 
-        print('[RANK %d] Loss: ' %(RANK), loss.item())
+        print('[RANK %d] Loss: ' %(RANK), format(loss.item(), ".6g"))
         
         loss.backward()
         #self.optimizer.step()
@@ -864,25 +897,25 @@ class Trainer:
         #     #w_grad_manual = -(y_target[1] - y_tilde) * ( (x_in[2]) ) # half of what rank 1 sees 
 
 
-        # # Compute the manual gradient, taking into account all nodes 
-        # if SIZE == 1: 
-        #     x_in = [14.3, 10.1, 13.2]
-        #     y_target = [3.43, 12.4, 2.23]
-        #     w_manual = 0.5
+        # Compute the manual gradient, taking into account all nodes 
+        #if SIZE == 1: 
+        x_in = [14.3, 10.1, 13.2]
+        y_target = [3.43, 12.4, 2.23]
+        w_manual = 0.5
 
-        #     # node 1 
-        #     y_tilde = w_manual * x_in[1] 
-        #     w_grad_1 = -2.0*(y_target[0] - y_tilde) * (x_in[1])
+        # node 1 
+        y_tilde = w_manual * x_in[1] 
+        w_grad_1 = -2.0*(y_target[0] - y_tilde) * (x_in[1])
 
-        #     # ndoe 2 
-        #     y_tilde = w_manual * x_in[0] + w_manual * x_in[2] 
-        #     w_grad_2 = -2.0 * (y_target[1] - y_tilde) * (x_in[0] + x_in[2])
+        # ndoe 2 
+        y_tilde = w_manual * x_in[0] + w_manual * x_in[2] 
+        w_grad_2 = -2.0 * (y_target[1] - y_tilde) * (x_in[0] + x_in[2])
 
-        #     # node 3 
-        #     y_tilde = w_manual * x_in[1]
-        #     w_grad_3 =  -2.0*(y_target[2] - y_tilde) * (x_in[1])
+        # node 3 
+        y_tilde = w_manual * x_in[1]
+        w_grad_3 =  -2.0*(y_target[2] - y_tilde) * (x_in[1])
 
-        #     w_grad_manual = (1.0/3.0) * (w_grad_1 + w_grad_2 + w_grad_3)
+        w_grad_manual = (1.0/3.0) * (w_grad_1 + w_grad_2 + w_grad_3)
 
         # elif SIZE == 2: 
         #     x_in = [14.3, 10.1, 13.2]
@@ -928,33 +961,129 @@ class Trainer:
         
         if WITH_CUDA:
             data.x = data.x.cuda() 
+            data.y = data.y.cuda()
             data.edge_index = data.edge_index.cuda()
+            data.edge_weight = data.edge_weight.cuda()
             data.edge_attr = data.edge_attr.cuda()
             data.pos = data.pos.cuda()
             data.batch = data.batch.cuda()
             loss = loss.cuda()
         
         self.optimizer.zero_grad()
-
+        
         # Prediction 
-        out_gnn = self.model(data.x, data.edge_index, data.edge_attr, data.pos, data.batch)
+        out_gnn = self.model(x = data.x,
+                             edge_index = data.edge_index,
+                             edge_weight = data.edge_weight,
+                             pos = data.pos, 
+                             halo_info = data.halo_info,
+                             mask_send = self.mask_send,
+                             mask_recv = self.mask_recv,
+                             buffer_send = self.buffer_send,
+                             buffer_recv = self.buffer_recv,
+                             neighboring_procs = self.neighboring_procs,
+                             SIZE = SIZE,
+                             batch = data.batch)
+
 
         # Accumulate loss
         target = data.y
-        if WITH_CUDA:
-            target = target.cuda()
 
-        # Standard loss 
-        loss = self.loss_fn(out_gnn, target)
+        # Toy loss: evaluate at all of the nodes 
+        n_nodes_local = data.n_nodes_local
+
+        if SIZE == 1:
+            loss = self.loss_fn(out_gnn[:n_nodes_local], target[:n_nodes_local])
+        else: # custom 
+            n_output_features = out_gnn.shape[1]
+            squared_errors_local = torch.pow(out_gnn[:n_nodes_local] - target[:n_nodes_local], 2)
+            squared_errors_local = squared_errors_local/data.node_degree[:n_nodes_local].unsqueeze(-1)
+
+            sum_squared_errors_local = squared_errors_local.sum()
+            effective_nodes_local = torch.sum(1.0/data.node_degree[:n_nodes_local])
+
+
+            effective_nodes = distnn.all_reduce(effective_nodes_local)
+            sum_squared_errors = distnn.all_reduce(sum_squared_errors_local)
+            loss = (1.0/(effective_nodes*n_output_features)) * sum_squared_errors
+
+        loss.backward()
+        self.optimizer.step()
+
+        return loss 
+
+
+    def train_step_verification(self, data: DataBatch) -> Tensor:
+        loss = torch.tensor([0.0])
         
-        if self.scaler is not None and isinstance(self.scaler, GradScaler):
-            self.scaler.scale(loss).backward()
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
+        if WITH_CUDA:
+            data.x = data.x.cuda() 
+            data.y = data.y.cuda()
+            data.edge_index = data.edge_index.cuda()
+            data.edge_weight = data.edge_weight.cuda()
+            data.edge_attr = data.edge_attr.cuda()
+            data.pos = data.pos.cuda()
+            data.batch = data.batch.cuda()
+            loss = loss.cuda()
+        
+        self.optimizer.zero_grad()
+        
+        # Prediction 
+        out_gnn = self.model(x = data.x,
+                             edge_index = data.edge_index,
+                             edge_weight = data.edge_weight,
+                             pos = data.pos, 
+                             halo_info = data.halo_info,
+                             mask_send = self.mask_send,
+                             mask_recv = self.mask_recv,
+                             buffer_send = self.buffer_send,
+                             buffer_recv = self.buffer_recv,
+                             neighboring_procs = self.neighboring_procs,
+                             SIZE = SIZE,
+                             batch = data.batch)
+
+        # Accumulate loss
+        target = data.y
+
+        # Toy loss: evaluate at all of the nodes 
+        n_nodes_local = data.n_nodes_local
+
+        if SIZE == 1:
+            loss = self.loss_fn(out_gnn[:n_nodes_local], target[:n_nodes_local])
+        else: # custom 
+            n_output_features = out_gnn.shape[1]
+            squared_errors_local = torch.pow(out_gnn[:n_nodes_local] - target[:n_nodes_local], 2)
+            squared_errors_local = squared_errors_local/data.node_degree[:n_nodes_local].unsqueeze(-1)
+
+            sum_squared_errors_local = squared_errors_local.sum()
+            effective_nodes_local = torch.sum(1.0/data.node_degree[:n_nodes_local])
+
+
+            effective_nodes = distnn.all_reduce(effective_nodes_local)
+            sum_squared_errors = distnn.all_reduce(sum_squared_errors_local)
+            loss = (1.0/(effective_nodes*n_output_features)) * sum_squared_errors
+
+        print('[RANK %d] Loss: ' %(RANK), loss.item())
+
+        loss.backward()
+        #self.optimizer.step()
+
+        # Print the backward gradient   
+        if SIZE == 1:
+            model = self.model 
+
         else:
-            loss.backward()
-            self.optimizer.step()
-        
+            model = self.model.module 
+
+        # loop through model parameters 
+        grad_dict = {name: param.grad for name, param in model.named_parameters()}
+        grad_dict["loss"] = loss.item()
+        #savepath = self.cfg.work_dir + '/outputs/postproc/gradient_data/tgv_poly_1'
+        savepath = self.cfg.work_dir + '/outputs/postproc/gradient_data/tgv_poly_7'
+        torch.save(grad_dict, savepath + '/%s.tar' %(model.get_save_header()))
+         
+        force_abort()
+
         return loss 
 
     def train_epoch(self, epoch: int) -> dict:
@@ -974,8 +1103,9 @@ class Trainer:
 
         for bidx, data in enumerate(train_loader):
             batch_size = len(data)
+            loss = self.train_step_verification(data)
             #loss = self.train_step(data)
-            loss = self.train_step_toy_1d(data)
+            #loss = self.train_step_toy_1d(data)
             #loss = self.train_step_toy_tgv(data)
             running_loss += loss.item()
             count += 1 # accumulate current batch count
@@ -1196,6 +1326,10 @@ def halo_test(cfg: DictConfig) -> None:
     # print('[RANK = %d] local_unique_mask' %(RANK), sample.local_unique_mask)
     # print('[RANK = %d] halo_unique_mask' %(RANK), sample.halo_unique_mask)
 
+    n_nodes_local = sample.n_nodes_local
+    #trainer.print_node_attribute(sample.x[:n_nodes_local,:], 'x')
+
+
     # Test the halo swap 
     # get masks  
     mask_send, mask_recv = trainer.build_masks()
@@ -1204,69 +1338,32 @@ def halo_test(cfg: DictConfig) -> None:
     n_features_x = sample.x.shape[1]
     buffer_send, buffer_recv = trainer.build_buffers(n_features_x)
     
+    # fill the buffers 
+    input_tensor = sample.x 
+    for i in trainer.neighboring_procs:
+        n_send = len(mask_send[i])
+        buffer_send[i][:n_send,:] = input_tensor[mask_send[i]]
+        print('[RANK = %d] \t i = %d \t n_send = %d \t buffer_send[i].shape: ' %(RANK,i,n_send), buffer_send[i].shape)
+
     # # do the swap 
     # #trainer.print_node_attribute(sample.x, 'x before')
     # print('[RANK = %d] x before swap: ' %(RANK), sample.x)
     # sample.x = trainer.halo_swap(sample.x, buffer_send, buffer_recv)
     # print('[RANK = %d] x after swap: ' %(RANK), sample.x)
 
-
     # ~~~~ ALL to ALL based swap
     # First step: fill the buffers 
-    
     if SIZE > 1:
-        # Fill send buffer
-        for i in trainer.neighboring_procs:
-            buffer_send[i] = sample.x[mask_send[i]]
-
-        for i in range(len(buffer_send)):
-            #if buffer_send[i] is None:
-            if len(buffer_send[i]) == 0:
-                buffer_send[i] = torch.tensor([[0.0]])
-
-        for i in range(len(buffer_recv)):
-            if len(buffer_recv[i]) == 0:
-                buffer_recv[i] = torch.tensor([[0.0]])
-
-        print('[RANK = %d] buffer_send: ' %(RANK), buffer_send)
 
         # Perform all to all
         distnn.all_to_all(buffer_recv, buffer_send)
 
-        # for i in range(SIZE):
-        #     # dist.scatter(buffer_recv[i], buffer_send if i == RANK else [], src=i)
-
-        #     buffer_recv[i] = distnn.scatter(buffer_send, src=i)
-
-
-        #     if RANK == 1:
-        #         print(buffer_recv[i])
-
-        # print('[RANK = %d] buffer_recv: ' %(RANK), buffer_recv)
-
         # Fill halo nodes 
         for i in trainer.neighboring_procs:
-            sample.x[mask_recv[i]] = buffer_recv[i]
+            n_recv = len(mask_recv[i])
+            sample.x[mask_recv[i]] = buffer_recv[i][:n_recv,:]
 
-
-
-    print('[RANK = %d] x\n' %(RANK), sample.x)
-
-
-
-    # # do the scatter 
-    # print('[RANK = %d] halo info: ' %(RANK), sample.halo_info)
-
-    # # 1) get the local nodes which will receive the scatter 
-    # idx_recv = sample.halo_info[:,0]
-    # idx_send = sample.halo_info[:,1]
-
-    # # 2) perform the accumulation 
-    # # Perform the scatter operation using index_add_
-    # sample.x.index_add_(0, idx_recv, sample.x.index_select(0, idx_send))
-    # 
-    # print('[RANK = %d] x after scatter: ' %(RANK), sample.x)
-
+    #trainer.print_node_attribute(sample.x[:n_nodes_local,:], 'x')
 
 
 @hydra.main(version_base=None, config_path='./conf', config_name='config')
@@ -1274,7 +1371,6 @@ def main(cfg: DictConfig) -> None:
     print('Rank %d, local rank %d, which has device %s. Sees %d devices.' %(RANK,int(LOCAL_RANK),DEVICE,torch.cuda.device_count()))
 
     train(cfg)
-
     #halo_test(cfg)
     
     cleanup()
