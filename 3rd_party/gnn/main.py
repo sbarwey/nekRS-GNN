@@ -46,13 +46,6 @@ import graph_plotting as gplot
 # Clean printing
 from prettytable import PrettyTable 
 
-# tensorboard 
-from torch.utils.tensorboard import SummaryWriter
-
-# torchvis 
-from torchviz import make_dot
-
-
 log = logging.getLogger(__name__)
 
 TORCH_FLOAT_DTYPE = torch.float32
@@ -154,6 +147,8 @@ class Trainer:
 
         # ~~~~ Setup data 
         self.data = self.setup_data()
+        if RANK == 0: log.info('Done with setup_data')
+
 
         # ~~~~ # self.n_nodes_internal_procs = list(torch.empty([1], dtype=torch.int64, device=DEVICE_ID)) * SIZE
         # ~~~~ # if WITH_CUDA:
@@ -163,10 +158,12 @@ class Trainer:
 
         # ~~~~ Setup halo exchange masks
         self.mask_send, self.mask_recv = self.build_masks()
+        if RANK == 0: log.info('Done with build_masks')
 
         # ~~~~ Initialize send/recv buffers on device (if applicable)
         self.hidden_channels = 32
         self.buffer_send, self.buffer_recv = self.build_buffers(self.hidden_channels)
+        if RANK == 0: log.info('Done with build_buffers')
 
         # ~~~~ # # ~~~~ Do a halo swap on position matrices 
         # ~~~~ # #if RANK == 1: 
@@ -181,6 +178,7 @@ class Trainer:
         self.model = self.build_model()
         if self.device == 'gpu':
             self.model.cuda()
+        if RANK == 0: log.info('Done with build_model')
 
         # ~~~~ Init training and testing loss history 
         self.loss_hist_train = np.zeros(self.cfg.epochs)
@@ -269,6 +267,9 @@ class Trainer:
         #model = gnn.toy_gnn_distributed()
 
         # ~~~~ Actual model 
+        if RANK == 0:
+            log.info('In build_model...')
+
         sample = self.data['train']['example'] 
         model = gnn.mp_gnn_distributed(input_channels = sample.x.shape[1], 
                            hidden_channels = self.hidden_channels,
@@ -372,6 +373,8 @@ class Trainer:
             for i in self.neighboring_procs:
                 n_nodes_to_exchange[i] = len(self.mask_send[i])
             n_max = n_nodes_to_exchange.max()
+            if WITH_CUDA: 
+                n_max = n_max.cuda()
             dist.all_reduce(n_max, op=dist.ReduceOp.MAX)
             n_max = int(n_max)
 
@@ -443,16 +446,16 @@ class Trainer:
         path_to_unique_halo = main_path + 'halo_unique_mask_rank_%d_size_%d' %(RANK,SIZE)
         
         # ~~~~ Get positions and global node index
-        if self.cfg.verbose: print('[RANK %d]: Loading positions and global node index' %(RANK))
+        if self.cfg.verbose: log.info('[RANK %d]: Loading positions and global node index' %(RANK))
         pos = np.loadtxt(path_to_pos_full, dtype=np.float32)
         gli = np.loadtxt(path_to_glob_ids, dtype=np.int64).reshape((-1,1))
 
         # ~~~~ Get edge index
-        if self.cfg.verbose: print('[RANK %d]: Loading edge index' %(RANK))
+        if self.cfg.verbose: log.info('[RANK %d]: Loading edge index' %(RANK))
         ei = np.loadtxt(path_to_ei, dtype=np.int64).T
         
         # ~~~~ Get local unique mask
-        if self.cfg.verbose: print('[RANK %d]: Loading local unique mask' %(RANK))
+        if self.cfg.verbose: log.info('[RANK %d]: Loading local unique mask' %(RANK))
         local_unique_mask = np.loadtxt(path_to_unique_local, dtype=np.int64)
 
         # ~~~~ Get halo unique mask
@@ -461,7 +464,7 @@ class Trainer:
             halo_unique_mask = np.loadtxt(path_to_unique_halo, dtype=np.int64)
 
         # ~~~~ Make the full graph: 
-        if self.cfg.verbose: print('[RANK %d]: Making the FULL GLL-based graph with overlapping nodes' %(RANK))
+        if self.cfg.verbose: log.info('[RANK %d]: Making the FULL GLL-based graph with overlapping nodes' %(RANK))
         data_full = Data(x = None, edge_index = torch.tensor(ei), pos = torch.tensor(pos), global_ids = torch.tensor(gli.squeeze()), local_unique_mask = torch.tensor(local_unique_mask), halo_unique_mask = torch.tensor(halo_unique_mask))
         data_full.edge_index = utils.remove_self_loops(data_full.edge_index)[0]
         data_full.edge_index = utils.coalesce(data_full.edge_index)
@@ -469,19 +472,19 @@ class Trainer:
         data_full.local_ids = torch.tensor(range(data_full.pos.shape[0]))
 
         # ~~~~ Get reduced (non-overlapping) graph and indices to go from full to reduced  
-        if self.cfg.verbose: print('[RANK %d]: Making the REDUCED GLL-based graph with non-overlapping nodes' %(RANK))
+        if self.cfg.verbose: log.info('[RANK %d]: Making the REDUCED GLL-based graph with non-overlapping nodes' %(RANK))
         data_reduced, idx_full2reduced = gcon.get_reduced_graph(data_full)
 
         # ~~~~ Get the indices to go from reduced back to full graph  
         # idx_reduced2full = None
-        if self.cfg.verbose: print('[RANK %d]: Getting idx_reduced2full' %(RANK))
+        if self.cfg.verbose: log.info('[RANK %d]: Getting idx_reduced2full' %(RANK))
         idx_reduced2full = gcon.get_upsample_indices(data_full, data_reduced, idx_full2reduced)
 
         return data_reduced, data_full, idx_full2reduced, idx_reduced2full
 
 
     def setup_halo(self):
-        if self.cfg.verbose: print('[RANK %d]: Assembling halo_ids_list using reduced graph' %(RANK))
+        if self.cfg.verbose: log.info('[RANK %d]: Assembling halo_ids_list using reduced graph' %(RANK))
         main_path = self.cfg.gnn_outputs_path
 
         halo_info = None
@@ -497,7 +500,7 @@ class Trainer:
             n_nodes_local = self.data_reduced.pos.shape[0]
             n_nodes_halo = 0
 
-        if self.cfg.verbose: print('[RANK %d] neighboring procs: ' %(RANK), self.neighboring_procs)
+        if self.cfg.verbose: log.info('[RANK %d] neighboring procs: ' %(RANK), self.neighboring_procs)
 
         self.data_reduced.n_nodes_local = torch.tensor(n_nodes_local, dtype=torch.int64)
         self.data_reduced.n_nodes_halo = torch.tensor(n_nodes_halo, dtype=torch.int64)
@@ -509,6 +512,9 @@ class Trainer:
         """
         Generate the PyTorch Geometric Dataset 
         """
+        if RANK == 0:
+            log.info('In setup_data...')
+
         # Load data 
         main_path = self.cfg.gnn_outputs_path
         path_to_x = main_path + 'fld_u_rank_%d_size_%d' %(RANK,SIZE)
@@ -1024,11 +1030,19 @@ class Trainer:
             data.edge_attr = data.edge_attr.cuda()
             data.pos = data.pos.cuda()
             data.batch = data.batch.cuda()
+            data.halo_info = data.halo_info.cuda()
+            data.node_degree = data.node_degree.cuda()
             loss = loss.cuda()
         
         self.optimizer.zero_grad()
         
-        # Prediction 
+        # # Prediction 
+        # log.info(f'[RANK {RANK}] : halo_info : {data.halo_info.device}')
+        # log.info(f'[RANK {RANK}] : buffer_send[0] : {self.buffer_send[0].device}')
+        # log.info(f'[RANK {RANK}] : buffer_send[1] : {self.buffer_send[1].device}')
+        # log.info(f'[RANK {RANK}] : buffer_recv[0] : {self.buffer_recv[0].device}')
+        # log.info(f'[RANK {RANK}] : buffer_recv[1] : {self.buffer_recv[1].device}')
+
         out_gnn = self.model(x = data.x,
                              edge_index = data.edge_index,
                              edge_weight = data.edge_weight,
@@ -1063,7 +1077,7 @@ class Trainer:
             sum_squared_errors = distnn.all_reduce(sum_squared_errors_local)
             loss = (1.0/(effective_nodes*n_output_features)) * sum_squared_errors
 
-        print('[RANK %d] Loss: ' %(RANK), loss.item())
+        log.info('[RANK %d] Loss: %g' %(RANK, loss.item()))
 
         loss.backward()
         #self.optimizer.step()
@@ -1078,8 +1092,8 @@ class Trainer:
         # loop through model parameters 
         grad_dict = {name: param.grad for name, param in model.named_parameters()}
         grad_dict["loss"] = loss.item()
-        #savepath = self.cfg.work_dir + '/outputs/postproc/gradient_data/tgv_poly_1'
-        savepath = self.cfg.work_dir + '/outputs/postproc/gradient_data/tgv_poly_7'
+        savepath = self.cfg.work_dir + '/outputs/postproc/gradient_data/tgv_poly_1'
+        #savepath = self.cfg.work_dir + '/outputs/postproc/gradient_data/tgv_poly_7'
         torch.save(grad_dict, savepath + '/%s.tar' %(model.get_save_header()))
          
         force_abort()

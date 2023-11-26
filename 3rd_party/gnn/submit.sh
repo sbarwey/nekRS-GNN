@@ -40,3 +40,8 @@ mpiexec \
 	--hostfile="${PBS_NODEFILE}" \
     --cpu-bind none \
 	./set_affinity_gpu_polaris.sh python3 main.py
+
+
+# mpiexec -n 1 -ppn 4 -d 8 --cpu-bind depth ./set_affinity_gpu_polaris.sh python3 main.py
+# mpiexec -n 2 -ppn 4 -d 8 --cpu-bind depth ./set_affinity_gpu_polaris.sh python3 main.py
+# mpiexec -n 4 -ppn 4 -d 8 --cpu-bind depth ./set_affinity_gpu_polaris.sh python3 main.py
