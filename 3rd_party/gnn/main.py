@@ -1024,7 +1024,7 @@ class Trainer:
         
         if WITH_CUDA:
             data.x = data.x.cuda() 
-            data.y = data.y.cuda()
+            #data.y = data.y.cuda()
             data.edge_index = data.edge_index.cuda()
             data.edge_weight = data.edge_weight.cuda()
             data.edge_attr = data.edge_attr.cuda()
@@ -1057,7 +1057,7 @@ class Trainer:
                              batch = data.batch)
 
         # Accumulate loss
-        target = data.y
+        target = data.x
 
         # Toy loss: evaluate at all of the nodes 
         n_nodes_local = data.n_nodes_local
@@ -1092,8 +1092,9 @@ class Trainer:
         # loop through model parameters 
         grad_dict = {name: param.grad for name, param in model.named_parameters()}
         grad_dict["loss"] = loss.item()
-        savepath = self.cfg.work_dir + '/outputs/postproc/gradient_data/tgv_poly_1'
-        #savepath = self.cfg.work_dir + '/outputs/postproc/gradient_data/tgv_poly_7'
+        #savepath = self.cfg.work_dir + '/outputs/postproc/gradient_data/tgv_poly_1'
+        savepath = self.cfg.work_dir + '/outputs/postproc/gradient_data/tgv_poly_7'
+        #savepath = self.cfg.work_dir + '/outputs/postproc/gradient_data/hemi_poly_9'
         torch.save(grad_dict, savepath + '/%s.tar' %(model.get_save_header()))
          
         force_abort()

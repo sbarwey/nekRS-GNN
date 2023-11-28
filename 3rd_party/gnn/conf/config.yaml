@@ -47,5 +47,7 @@ model_dir: ${work_dir}/saved_models/
 #gnn_outputs_path: /Users/sbarwey/Files/nekrs_cases/examples_v23/tgv_gnn_wall/gnn_outputs/
 #gnn_outputs_path: /Users/sbarwey/Files/nekrs_cases/examples_v23/toy_graph_1d/gnn_outputs/
 
-gnn_outputs_path: /lus/eagle/projects/datascience/sbarwey/codes/nek/nekRS-GNN-devel/examples/tgv/gnn_outputs_poly_1/
+#gnn_outputs_path: /lus/eagle/projects/datascience/sbarwey/codes/nek/nekRS-GNN-devel/examples/tgv/gnn_outputs_poly_1/
+gnn_outputs_path: /lus/eagle/projects/datascience/sbarwey/codes/nek/nekRS-GNN-devel/examples/tgv/gnn_outputs_poly_7/
+#gnn_outputs_path: /lus/eagle/projects/datascience/sbarwey/codes/nek/nekRS-GNN-devel/examples/hemi_gnn/gnn_outputs_poly_9/
 #gnn_outputs_path: /lus/eagle/projects/datascience/sbarwey/codes/nek/nekrs_cases/examples_v23/toy_graph_1d/gnn_outputs/
