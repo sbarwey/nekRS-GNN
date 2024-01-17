@@ -14,6 +14,7 @@ import numpy as np
 import hydra
 import time
 import torch
+#torch.use_deterministic_algorithms(True)
 import torch.utils.data
 import torch.utils.data.distributed
 from torch.cuda.amp.grad_scaler import GradScaler
@@ -61,6 +62,10 @@ try:
     COMM = MPI.COMM_WORLD
 
     WITH_CUDA = torch.cuda.is_available()
+
+    # # Override gpu utilization
+    # WITH_CUDA = False
+
     DEVICE = 'gpu' if WITH_CUDA else 'cpu'
     if DEVICE == 'gpu':
         DEVICE_ID = 'cuda:0' 
@@ -130,7 +135,8 @@ class Trainer:
         self.rank = RANK
         if scaler is None:
             self.scaler = None
-        self.device = 'gpu' if torch.cuda.is_available() else 'cpu'
+        #self.device = 'gpu' if torch.cuda.is_available() else 'cpu'
+        self.device = 'gpu' if WITH_CUDA else 'cpu'
         self.backend = self.cfg.backend
         if WITH_DDP:
             init_process_group(RANK, SIZE, backend=self.backend)
@@ -1043,6 +1049,35 @@ class Trainer:
         # log.info(f'[RANK {RANK}] : buffer_recv[0] : {self.buffer_recv[0].device}')
         # log.info(f'[RANK {RANK}] : buffer_recv[1] : {self.buffer_recv[1].device}')
 
+
+        # Make everything FP-64 
+        self.model.to(torch.float64)
+        data.x = data.x.to(torch.float64)
+        data.edge_weight = data.edge_weight.to(torch.float64)
+        data.pos = data.pos.to(torch.float64)
+        for i in range(SIZE):
+            self.buffer_send[i] = self.buffer_send[i].to(torch.float64)
+            self.buffer_recv[i] = self.buffer_recv[i].to(torch.float64)
+        data.node_degree = data.node_degree.to(torch.float64)
+
+        # if RANK == 0:
+        #     print('\n\n')
+        #     print('data.x: ', data.x.dtype)
+        #     print('data.edge_index: ', data.edge_index.dtype)
+        #     print('data.edge_weight: ', data.edge_weight.dtype)
+        #     print('data.pos: ', data.pos.dtype)
+        #     print('data.halo_info: ', data.halo_info.dtype)
+        #     #print('self.mask_send: ', self.mask_send[3].dtype)
+        #     #print('self.mask_recv: ', self.mask_recv[3].dtype)
+        #     #print('self.buffer_send: ', self.buffer_send[3].dtype)
+        #     #print('self.buffer_recv: ', self.buffer_recv[3].dtype)
+        #     print('data.batch: ', data.batch.dtype)
+        #     print('\n\n')
+
+        # time.sleep(2)
+
+
+
         out_gnn = self.model(x = data.x,
                              edge_index = data.edge_index,
                              edge_weight = data.edge_weight,
@@ -1078,6 +1113,7 @@ class Trainer:
             loss = (1.0/(effective_nodes*n_output_features)) * sum_squared_errors
 
         log.info('[RANK %d] Loss: %g' %(RANK, loss.item()))
+        #log.info('[RANK %d] Loss: %s' %(RANK, loss.dtype))
 
         loss.backward()
         #self.optimizer.step()
@@ -1092,12 +1128,33 @@ class Trainer:
         # loop through model parameters 
         grad_dict = {name: param.grad for name, param in model.named_parameters()}
         grad_dict["loss"] = loss.item()
-        #savepath = self.cfg.work_dir + '/outputs/postproc/gradient_data/tgv_poly_1'
-        savepath = self.cfg.work_dir + '/outputs/postproc/gradient_data/tgv_poly_7'
-        #savepath = self.cfg.work_dir + '/outputs/postproc/gradient_data/hemi_poly_9'
+        #savepath = self.cfg.work_dir + '/outputs/postproc/gradient_data_cpu_nondeterministic/tgv_poly_1'
+        savepath = self.cfg.work_dir + '/outputs/postproc/gradient_data_gpu_nondeterministic_repeat/tgv_poly_1/float64'
+        
         torch.save(grad_dict, savepath + '/%s.tar' %(model.get_save_header()))
-         
+
+
+        # # save model 
+        # if SIZE == 1:
+        #     model = self.model 
+
+        # else:
+        #     model = self.model.module 
+
+        # sd = model.state_dict()
+        # ind = model.input_dict()
+
+        # save_dict = {
+        #             'state_dict' : sd,
+        #             'input_dict' : ind,
+        #             }
+
+
+        # savepath = self.cfg.work_dir + '/outputs/postproc/models/tgv_poly_1'
+        # #torch.save(save_dict, savepath + '/%s.tar' %(model.get_save_header()))
+
         force_abort()
+         
 
         return loss 
 
