@@ -17,6 +17,9 @@ restart: False
 # Number of training rollout steps
 rollout_steps: 1
 
+# Halo swap mode 
+halo_swap_mode : all_to_all
+
 # plotting the connecivity (can take some time)
 plot_connectivity : False
 

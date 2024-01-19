@@ -14,7 +14,7 @@ import numpy as np
 import hydra
 import time
 import torch
-#torch.use_deterministic_algorithms(True)
+# torch.use_deterministic_algorithms(True)
 import torch.utils.data
 import torch.utils.data.distributed
 from torch.cuda.amp.grad_scaler import GradScaler
@@ -63,7 +63,7 @@ try:
 
     WITH_CUDA = torch.cuda.is_available()
 
-    # # Override gpu utilization
+    # Override gpu utilization
     # WITH_CUDA = False
 
     DEVICE = 'gpu' if WITH_CUDA else 'cpu'
@@ -283,9 +283,7 @@ class Trainer:
                            n_mlp_layers = [3,3,3], 
                            n_messagePassing_layers = 5,
                            activation = F.elu,
-                           halo_swap_mode = 'all_to_all', 
-                           #halo_swap_mode = 'sendrecv', 
-                           #halo_swap_mode = 'none', 
+                           halo_swap_mode = self.cfg.halo_swap_mode, 
                            name = 'RANK_%d_SIZE_%d' %(RANK,SIZE))
         
         return model
@@ -1049,16 +1047,15 @@ class Trainer:
         # log.info(f'[RANK {RANK}] : buffer_recv[0] : {self.buffer_recv[0].device}')
         # log.info(f'[RANK {RANK}] : buffer_recv[1] : {self.buffer_recv[1].device}')
 
-
-        # Make everything FP-64 
-        self.model.to(torch.float64)
-        data.x = data.x.to(torch.float64)
-        data.edge_weight = data.edge_weight.to(torch.float64)
-        data.pos = data.pos.to(torch.float64)
-        for i in range(SIZE):
-            self.buffer_send[i] = self.buffer_send[i].to(torch.float64)
-            self.buffer_recv[i] = self.buffer_recv[i].to(torch.float64)
-        data.node_degree = data.node_degree.to(torch.float64)
+        # # Make everything FP-64 
+        # self.model.to(torch.float64)
+        # data.x = data.x.to(torch.float64)
+        # data.edge_weight = data.edge_weight.to(torch.float64)
+        # data.pos = data.pos.to(torch.float64)
+        # for i in range(SIZE):
+        #     self.buffer_send[i] = self.buffer_send[i].to(torch.float64)
+        #     self.buffer_recv[i] = self.buffer_recv[i].to(torch.float64)
+        # data.node_degree = data.node_degree.to(torch.float64)
 
         # if RANK == 0:
         #     print('\n\n')
@@ -1112,11 +1109,22 @@ class Trainer:
             sum_squared_errors = distnn.all_reduce(sum_squared_errors_local)
             loss = (1.0/(effective_nodes*n_output_features)) * sum_squared_errors
 
-        log.info('[RANK %d] Loss: %g' %(RANK, loss.item()))
-        #log.info('[RANK %d] Loss: %s' %(RANK, loss.dtype))
-
-        loss.backward()
+        
+        #loss.backward()
         #self.optimizer.step()
+
+        # Another QoI, based purely on the prediction 
+        qoi_out_local_sum = out_gnn[:n_nodes_local].sum() 
+        qoi_out = distnn.all_reduce(qoi_out_local_sum)
+
+        qoi_in_local_sum = data.x[:n_nodes_local].sum()
+        qoi_in = distnn.all_reduce(qoi_in_local_sum)
+
+
+        log.info('[RANK %d] Loss: %g' %(RANK, loss.item()))
+        log.info('[RANK %d] QoI in: %g' %(RANK, qoi_in.item()))
+        log.info('[RANK %d] QoI out: %g' %(RANK, qoi_out.item()))
+        #log.info('[RANK %d] Loss: %s' %(RANK, loss.dtype))
 
         # Print the backward gradient   
         if SIZE == 1:
@@ -1128,10 +1136,15 @@ class Trainer:
         # loop through model parameters 
         grad_dict = {name: param.grad for name, param in model.named_parameters()}
         grad_dict["loss"] = loss.item()
-        #savepath = self.cfg.work_dir + '/outputs/postproc/gradient_data_cpu_nondeterministic/tgv_poly_1'
-        savepath = self.cfg.work_dir + '/outputs/postproc/gradient_data_gpu_nondeterministic_repeat/tgv_poly_1/float64'
+        grad_dict["qoi_out"] = qoi_out.item()
+        grad_dict["qoi_in"] = qoi_in.item()
+        #savepath = self.cfg.work_dir + '/outputs/postproc/gradient_data_cpu_deterministic/tgv_poly_1/float32'
+        #savepath = self.cfg.work_dir + '/outputs/postproc/gradient_data_cpu_nondeterministic/tgv_poly_1/float64'
+        savepath = self.cfg.work_dir + '/outputs/postproc/gradient_data_gpu_nondeterministic_repeat/tgv_poly_1/float32'
         
+
         torch.save(grad_dict, savepath + '/%s.tar' %(model.get_save_header()))
+
 
 
         # # save model 
