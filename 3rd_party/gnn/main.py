@@ -14,7 +14,7 @@ import numpy as np
 import hydra
 import time
 import torch
-# torch.use_deterministic_algorithms(True)
+#torch.use_deterministic_algorithms(True)
 import torch.utils.data
 import torch.utils.data.distributed
 from torch.cuda.amp.grad_scaler import GradScaler
@@ -50,6 +50,7 @@ from prettytable import PrettyTable
 log = logging.getLogger(__name__)
 
 TORCH_FLOAT_DTYPE = torch.float32
+NP_FLOAT_DTYPE = np.float32
 
 # Get MPI:
 try:
@@ -168,6 +169,8 @@ class Trainer:
 
         # ~~~~ Initialize send/recv buffers on device (if applicable)
         self.hidden_channels = 32
+        self.hidden_channels = 3
+        self.hidden_channels = 1
         self.buffer_send, self.buffer_recv = self.build_buffers(self.hidden_channels)
         if RANK == 0: log.info('Done with build_buffers')
 
@@ -184,6 +187,8 @@ class Trainer:
         self.model = self.build_model()
         if self.device == 'gpu':
             self.model.cuda()
+        self.model.to(TORCH_FLOAT_DTYPE)
+
         if RANK == 0: log.info('Done with build_model')
 
         # ~~~~ Init training and testing loss history 
@@ -277,14 +282,20 @@ class Trainer:
             log.info('In build_model...')
 
         sample = self.data['train']['example'] 
-        model = gnn.mp_gnn_distributed(input_channels = sample.x.shape[1], 
-                           hidden_channels = self.hidden_channels,
-                           output_channels = sample.y.shape[1],
-                           n_mlp_layers = [3,3,3], 
-                           n_messagePassing_layers = 5,
-                           activation = F.elu,
-                           halo_swap_mode = self.cfg.halo_swap_mode, 
-                           name = 'RANK_%d_SIZE_%d' %(RANK,SIZE))
+
+        # Toy model 
+        model = gnn.toy_gnn_distributed(halo_swap_mode = self.cfg.halo_swap_mode,
+                                        name = 'TOY_RANK_%d_SIZE_%d' %(RANK,SIZE))
+
+        # # Full model 
+        # model = gnn.mp_gnn_distributed(input_channels = sample.x.shape[1], 
+        #                    hidden_channels = self.hidden_channels,
+        #                    output_channels = sample.y.shape[1],
+        #                    n_mlp_layers = [3,3,3], 
+        #                    n_messagePassing_layers = 5,
+        #                    activation = F.elu,
+        #                    halo_swap_mode = self.cfg.halo_swap_mode, 
+        #                    name = 'RANK_%d_SIZE_%d' %(RANK,SIZE))
         
         return model
 
@@ -384,8 +395,8 @@ class Trainer:
 
             # fill the buffers 
             for i in range(SIZE): 
-                buff_send[i] = torch.empty([n_max, n_features], dtype=torch.float32, device=DEVICE_ID) 
-                buff_recv[i] = torch.empty([n_max, n_features], dtype=torch.float32, device=DEVICE_ID)
+                buff_send[i] = torch.empty([n_max, n_features], dtype=TORCH_FLOAT_DTYPE, device=DEVICE_ID) 
+                buff_recv[i] = torch.empty([n_max, n_features], dtype=TORCH_FLOAT_DTYPE, device=DEVICE_ID)
 
             #for i in self.neighboring_procs:
             #    buff_send[i] = torch.empty([len(self.mask_send[i]), n_features], dtype=torch.float32, device=DEVICE_ID) 
@@ -504,7 +515,7 @@ class Trainer:
             n_nodes_local = self.data_reduced.pos.shape[0]
             n_nodes_halo = 0
 
-        if self.cfg.verbose: log.info('[RANK %d] neighboring procs: ' %(RANK), self.neighboring_procs)
+        #if self.cfg.verbose: log.info('[RANK %d] neighboring procs: ' %(RANK), self.neighboring_procs)
 
         self.data_reduced.n_nodes_local = torch.tensor(n_nodes_local, dtype=torch.int64)
         self.data_reduced.n_nodes_halo = torch.tensor(n_nodes_halo, dtype=torch.int64)
@@ -521,11 +532,29 @@ class Trainer:
 
         # Load data 
         main_path = self.cfg.gnn_outputs_path
-        path_to_x = main_path + 'fld_u_rank_%d_size_%d' %(RANK,SIZE)
-        #path_to_y = main_path + 'fld_p_rank_%d_size_%d' %(RANK,SIZE)
-        path_to_y = main_path + 'fld_u_rank_%d_size_%d' %(RANK,SIZE)
-        data_x = np.loadtxt(path_to_x, ndmin=2, dtype=np.float32) #[:,0:1]
-        data_y = np.loadtxt(path_to_y, ndmin=2, dtype=np.float32) 
+        path_to_x = main_path + 'fld_u_time_10.0_rank_%d_size_%d' %(RANK,SIZE)
+        path_to_y = main_path + 'fld_u_time_10.0_rank_%d_size_%d' %(RANK,SIZE)
+        data_x = np.loadtxt(path_to_x, dtype=NP_FLOAT_DTYPE)[:,0:1]
+        data_y = np.loadtxt(path_to_y, dtype=NP_FLOAT_DTYPE)[:,0:1] 
+
+        # Retain only N_gll = Np*Ne elements
+        N_gll = self.data_full.pos.shape[0] 
+        data_x = data_x[:N_gll, :]
+        data_y = data_y[:N_gll, :]
+
+        # Get max 
+        data_x_temp = torch.tensor(self.data_full.pos)
+        data_x_max_local = torch.max(data_x_temp, dim=0)[0] 
+        data_x_max = distnn.all_reduce(data_x_max_local, op=torch.distributed.ReduceOp.MAX) 
+        data_x_min_local = torch.min(data_x_temp, dim=0)[0]
+        data_x_min = distnn.all_reduce(data_x_min_local, op=torch.distributed.ReduceOp.MIN) 
+
+        # sum_x_scaled = x_scaled.sum(axis=0)
+        # total_sum_x_scaled = distnn.all_reduce(sum_x_scaled)
+
+        log.info(f'[RANK {RANK}] : data_x.max : {data_x_max[2].item()}')
+        log.info(f'[RANK {RANK}] : data_x.min : {data_x_min[2].item()}')
+
 
         # Get data in reduced format (non-overlapping)
         data_x_reduced = data_x[self.idx_full2reduced, :]
@@ -534,12 +563,12 @@ class Trainer:
 
         # Read in edge weights 
         path_to_ew = main_path + 'edge_weights_rank_%d_size_%d.npy' %(RANK,SIZE)
-        edge_freq = torch.tensor(np.load(path_to_ew))
+        edge_freq = torch.tensor(np.load(path_to_ew), dtype=TORCH_FLOAT_DTYPE)
         self.data_reduced.edge_weight = 1.0/edge_freq
 
         # Read in node degree
         path_to_node_degree = main_path + 'node_degree_rank_%d_size_%d.npy' %(RANK,SIZE)
-        node_degree = torch.tensor(np.load(path_to_node_degree))
+        node_degree = torch.tensor(np.load(path_to_node_degree), dtype=TORCH_FLOAT_DTYPE)
         self.data_reduced.node_degree = node_degree
 
         # Add halo nodes by appending the end of the node arrays  
@@ -1047,7 +1076,7 @@ class Trainer:
         # log.info(f'[RANK {RANK}] : buffer_recv[0] : {self.buffer_recv[0].device}')
         # log.info(f'[RANK {RANK}] : buffer_recv[1] : {self.buffer_recv[1].device}')
 
-        # # Make everything FP-64 
+        # Make everything FP-64 
         # self.model.to(torch.float64)
         # data.x = data.x.to(torch.float64)
         # data.edge_weight = data.edge_weight.to(torch.float64)
@@ -1066,19 +1095,17 @@ class Trainer:
         #     print('data.halo_info: ', data.halo_info.dtype)
         #     #print('self.mask_send: ', self.mask_send[3].dtype)
         #     #print('self.mask_recv: ', self.mask_recv[3].dtype)
-        #     #print('self.buffer_send: ', self.buffer_send[3].dtype)
-        #     #print('self.buffer_recv: ', self.buffer_recv[3].dtype)
+        #     print('self.buffer_send: ', self.buffer_send[3].dtype)
+        #     print('self.buffer_recv: ', self.buffer_recv[3].dtype)
         #     print('data.batch: ', data.batch.dtype)
         #     print('\n\n')
 
         # time.sleep(2)
 
-
-
+        # Toy GNN 
         out_gnn = self.model(x = data.x,
                              edge_index = data.edge_index,
                              edge_weight = data.edge_weight,
-                             pos = data.pos, 
                              halo_info = data.halo_info,
                              mask_send = self.mask_send,
                              mask_recv = self.mask_recv,
@@ -1088,6 +1115,20 @@ class Trainer:
                              SIZE = SIZE,
                              batch = data.batch)
 
+        # # Full GNN 
+        # out_gnn = self.model(x = data.x,
+        #                      edge_index = data.edge_index,
+        #                      edge_weight = data.edge_weight,
+        #                      pos = data.pos, 
+        #                      halo_info = data.halo_info,
+        #                      mask_send = self.mask_send,
+        #                      mask_recv = self.mask_recv,
+        #                      buffer_send = self.buffer_send,
+        #                      buffer_recv = self.buffer_recv,
+        #                      neighboring_procs = self.neighboring_procs,
+        #                      SIZE = SIZE,
+        #                      batch = data.batch)
+
         # Accumulate loss
         target = data.x
 
@@ -1096,6 +1137,7 @@ class Trainer:
 
         if SIZE == 1:
             loss = self.loss_fn(out_gnn[:n_nodes_local], target[:n_nodes_local])
+            effective_nodes = n_nodes_local 
         else: # custom 
             n_output_features = out_gnn.shape[1]
             squared_errors_local = torch.pow(out_gnn[:n_nodes_local] - target[:n_nodes_local], 2)
@@ -1103,7 +1145,6 @@ class Trainer:
 
             sum_squared_errors_local = squared_errors_local.sum()
             effective_nodes_local = torch.sum(1.0/data.node_degree[:n_nodes_local])
-
 
             effective_nodes = distnn.all_reduce(effective_nodes_local)
             sum_squared_errors = distnn.all_reduce(sum_squared_errors_local)
@@ -1113,37 +1154,55 @@ class Trainer:
         #loss.backward()
         #self.optimizer.step()
 
-        # Another QoI, based purely on the prediction 
-        qoi_out_local_sum = out_gnn[:n_nodes_local].sum() 
-        qoi_out = distnn.all_reduce(qoi_out_local_sum)
+        # Scaled sum of input node features 
+        x_scaled = data.x[:n_nodes_local, :]/data.node_degree[:n_nodes_local].unsqueeze(-1)
+        sum_x_scaled = x_scaled.sum(axis=0)
+        total_sum_x_scaled = distnn.all_reduce(sum_x_scaled)
 
-        qoi_in_local_sum = data.x[:n_nodes_local].sum()
-        qoi_in = distnn.all_reduce(qoi_in_local_sum)
+        # Scaled sum of output node features 
+        y_scaled = out_gnn[:n_nodes_local, :].detach()/data.node_degree[:n_nodes_local].unsqueeze(-1) 
+        sum_y_scaled = y_scaled.sum(axis=0)
+        total_sum_y_scaled = distnn.all_reduce(sum_y_scaled)
 
 
-        log.info('[RANK %d] Loss: %g' %(RANK, loss.item()))
-        log.info('[RANK %d] QoI in: %g' %(RANK, qoi_in.item()))
-        log.info('[RANK %d] QoI out: %g' %(RANK, qoi_out.item()))
-        #log.info('[RANK %d] Loss: %s' %(RANK, loss.dtype))
+        # Sum of n_nodes_local 
+        n_nodes = distnn.all_reduce(n_nodes_local)
+
+        #log.info('[RANK %d] Loss: %g' %(RANK, loss.item()))
+        #log.info('[RANK %d] QoI in scaled: %g' %(RANK, total_sum_x_scaled.item()))
+        log.info(f'[RANK {RANK}] : Input dtype : {data.x.dtype}')
+        log.info(f'[RANK {RANK}] : Output dtype : {out_gnn.dtype}')
+        log.info(f'[RANK {RANK}] : QoI in scaled : {total_sum_x_scaled}')
+        log.info(f'[RANK {RANK}] : QoI out scaled : {total_sum_y_scaled}')
+        log.info('[RANK %d] n_nodes total: %g \t effective_nodes: %g' %(RANK, n_nodes.item(), effective_nodes.item()))
+        #log.info('[RANK %d] Effective nodes: %g' %(RANK, effective_nodes.item()))
+        #log.info('[RANK %d] QoI out: %g' %(RANK, qoi_out.item()))
 
         # Print the backward gradient   
         if SIZE == 1:
             model = self.model 
-
         else:
             model = self.model.module 
 
         # loop through model parameters 
         grad_dict = {name: param.grad for name, param in model.named_parameters()}
         grad_dict["loss"] = loss.item()
-        grad_dict["qoi_out"] = qoi_out.item()
-        grad_dict["qoi_in"] = qoi_in.item()
-        #savepath = self.cfg.work_dir + '/outputs/postproc/gradient_data_cpu_deterministic/tgv_poly_1/float32'
-        #savepath = self.cfg.work_dir + '/outputs/postproc/gradient_data_cpu_nondeterministic/tgv_poly_1/float64'
-        savepath = self.cfg.work_dir + '/outputs/postproc/gradient_data_gpu_nondeterministic_repeat/tgv_poly_1/float32'
-        
+        grad_dict["total_sum_x_scaled"] = total_sum_x_scaled
+        grad_dict["total_sum_y_scaled"] = total_sum_y_scaled
+        grad_dict["effective_nodes"] = effective_nodes
 
+        if (TORCH_FLOAT_DTYPE == torch.float64):
+            path_desc = 'float64'
+        else:
+            path_desc = 'float32'
+        
+        savepath = self.cfg.work_dir + '/outputs/postproc/not_periodic_after_fix/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/%s' %(path_desc)
+        #savepath = self.cfg.work_dir + '/outputs/postproc/periodic_before_fix/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/%s' %(path_desc)
+        #savepath = self.cfg.work_dir + '/outputs/postproc/periodic_after_fix/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/%s' %(path_desc)
+        
         torch.save(grad_dict, savepath + '/%s.tar' %(model.get_save_header()))
+
+
 
 
 

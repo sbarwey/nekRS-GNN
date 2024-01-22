@@ -18,11 +18,15 @@ class toy_gnn_distributed(torch.nn.Module):
     Toy GNN for testing distributed backpropagation.
     There is only one parameter: w_mp, a scalar edge weight used in edge aggregation.
     """
-    def __init__(self):
+    def __init__(self,
+                 halo_swap_mode: Optional[str] = 'all_to_all',
+                 name: Optional[str] = 'model'):
         super().__init__()
         self.edge_aggregator = EdgeAggregation(aggr='add') # for edge aggregation 
         #self.w_mp = nn.Parameter(torch.randn(1)) # GNN parameter 
         self.w_mp = nn.Parameter(torch.tensor([0.5])) # GNN parameter 
+        self.halo_swap_mode = halo_swap_mode
+        self.name = name 
 
     def forward(
             self,
@@ -73,8 +77,71 @@ class toy_gnn_distributed(torch.nn.Module):
         
         return x 
 
-
     def halo_swap(self, 
+                  input_tensor, 
+                  mask_send, 
+                  mask_recv, 
+                  buff_send, 
+                  buff_recv, 
+                  neighboring_procs, 
+                  SIZE):
+        """
+        Performs halo swap using send/receive buffers
+        uses all_to_all implementation
+        """
+        if SIZE > 1:
+            if self.halo_swap_mode == 'all_to_all':
+                # Fill send buffer
+                for i in neighboring_procs:
+                    n_send = len(mask_send[i])
+                    buff_send[i][:n_send,:] = input_tensor[mask_send[i]]
+
+                # Perform all_to_all
+                distnn.all_to_all(buff_recv, buff_send)
+            
+                # Fill halo nodes
+                for i in neighboring_procs:
+                    n_recv = len(mask_recv[i])
+                    input_tensor[mask_recv[i]] = buff_recv[i][:n_recv,:]
+
+            elif self.halo_swap_mode == 'sendrecv':
+                # Fill send buffer
+                for i in neighboring_procs:
+                    n_send = len(mask_send[i])
+                    buff_send[i][:n_send,:] = input_tensor[mask_send[i]]
+
+                # Perform swap
+                req_send_list = []
+                for i in neighboring_procs:
+                    req_send = dist.isend(tensor=buff_send[i], dst=i)
+                    req_send_list.append(req_send)
+
+                req_recv_list = []
+                for i in neighboring_procs:
+                    req_recv = dist.irecv(tensor=buff_recv[i], src=i)
+                    req_recv_list.append(req_recv)
+
+                for req_send in req_send_list:
+                    req_send.wait()
+
+                for req_recv in req_recv_list:
+                    req_recv.wait()
+
+                dist.barrier()
+
+                # Fill halo nodes
+                for i in neighboring_procs:
+                    n_recv = len(mask_recv[i])
+                    input_tensor[mask_recv[i]] = buff_recv[i][:n_recv,:]
+            elif self.halo_swap_mode == 'none':
+                pass
+            else:
+                raise ValueError("halo_swap_mode %s not valid. Valid options: all_to_all, sendrecv" %(self.halo_swap_mode))
+
+        return input_tensor
+
+
+    def halo_swap_old(self, 
                   input_tensor, 
                   mask_send, 
                   mask_recv, 
@@ -159,6 +226,11 @@ class toy_gnn_distributed(torch.nn.Module):
     def input_dict(self) -> dict:
         a = {}
         return a
+
+    def get_save_header(self) -> str:
+        header = '%s' %(self.name)
+        header += '_halo_%s' %(self.halo_swap_mode)
+        return header
 
 class toy_gnn(torch.nn.Module):
     """
