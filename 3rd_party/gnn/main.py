@@ -49,8 +49,8 @@ from prettytable import PrettyTable
 
 log = logging.getLogger(__name__)
 
-TORCH_FLOAT_DTYPE = torch.float32
-NP_FLOAT_DTYPE = np.float32
+TORCH_FLOAT_DTYPE = torch.float64
+NP_FLOAT_DTYPE = np.float64
 
 # Get MPI:
 try:
@@ -473,6 +473,8 @@ class Trainer:
         if self.cfg.verbose: log.info('[RANK %d]: Loading local unique mask' %(RANK))
         local_unique_mask = np.loadtxt(path_to_unique_local, dtype=np.int64)
 
+        print('CHECK --- local_unique_mask.shape: ', local_unique_mask.shape)
+
         # ~~~~ Get halo unique mask
         halo_unique_mask = np.array([])
         if SIZE > 1:
@@ -554,6 +556,7 @@ class Trainer:
 
         log.info(f'[RANK {RANK}] : data_x.max : {data_x_max[2].item()}')
         log.info(f'[RANK {RANK}] : data_x.min : {data_x_min[2].item()}')
+        log.info(f'[RANK {RANK}] : N_gll full : {N_gll}')
 
 
         # Get data in reduced format (non-overlapping)
@@ -622,6 +625,7 @@ class Trainer:
         data_temp.node_degree = torch.cat((data_temp.node_degree, node_degree_halo), dim=0)
         data_temp.edge_index = torch.cat((data_temp.edge_index, edge_index_halo), dim=1)
         data_temp.edge_weight = torch.cat((data_temp.edge_weight, edge_weight_halo), dim=0)
+        data_temp.edge_weight_temp = data_temp.edge_weight
 
         data_temp = data_temp.to(device_for_loading)
         data_train_list.append(data_temp)
@@ -1164,9 +1168,14 @@ class Trainer:
         sum_y_scaled = y_scaled.sum(axis=0)
         total_sum_y_scaled = distnn.all_reduce(sum_y_scaled)
 
-
         # Sum of n_nodes_local 
         n_nodes = distnn.all_reduce(n_nodes_local)
+
+        # Edge weights 
+        n_edges_local = torch.tensor(data.edge_index.shape[1])
+        n_edges = distnn.all_reduce(n_edges_local)
+        effective_edges_local = torch.tensor(data.edge_weight.sum())
+        effective_edges = distnn.all_reduce(effective_edges_local)
 
         #log.info('[RANK %d] Loss: %g' %(RANK, loss.item()))
         #log.info('[RANK %d] QoI in scaled: %g' %(RANK, total_sum_x_scaled.item()))
@@ -1175,6 +1184,8 @@ class Trainer:
         log.info(f'[RANK {RANK}] : QoI in scaled : {total_sum_x_scaled}')
         log.info(f'[RANK {RANK}] : QoI out scaled : {total_sum_y_scaled}')
         log.info('[RANK %d] n_nodes total: %g \t effective_nodes: %g' %(RANK, n_nodes.item(), effective_nodes.item()))
+        log.info('[RANK %d] ei_edges_local: %g \t ei_edges total: %g' %(RANK, n_edges_local.item(), n_edges.item()))
+        log.info('[RANK %d] effective_edges_local: %g \t effective_edges total: %g' %(RANK, effective_edges_local.item(), effective_edges.item()))
         #log.info('[RANK %d] Effective nodes: %g' %(RANK, effective_nodes.item()))
         #log.info('[RANK %d] QoI out: %g' %(RANK, qoi_out.item()))
 
@@ -1196,11 +1207,12 @@ class Trainer:
         else:
             path_desc = 'float32'
         
-        savepath = self.cfg.work_dir + '/outputs/postproc/not_periodic_after_fix/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/%s' %(path_desc)
+        #savepath = self.cfg.work_dir + '/outputs/postproc/not_periodic_after_fix/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/%s' %(path_desc)
         #savepath = self.cfg.work_dir + '/outputs/postproc/periodic_before_fix/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/%s' %(path_desc)
         #savepath = self.cfg.work_dir + '/outputs/postproc/periodic_after_fix/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/%s' %(path_desc)
         
-        torch.save(grad_dict, savepath + '/%s.tar' %(model.get_save_header()))
+        #torch.save(grad_dict, savepath + '/%s.tar' %(model.get_save_header()))
+
 
 
 
