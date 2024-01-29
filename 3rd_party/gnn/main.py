@@ -169,8 +169,8 @@ class Trainer:
 
         # ~~~~ Initialize send/recv buffers on device (if applicable)
         self.hidden_channels = 32
-        self.hidden_channels = 3
-        self.hidden_channels = 1
+        #self.hidden_channels = 3
+        #self.hidden_channels = 1
         self.buffer_send, self.buffer_recv = self.build_buffers(self.hidden_channels)
         if RANK == 0: log.info('Done with build_buffers')
 
@@ -283,19 +283,19 @@ class Trainer:
 
         sample = self.data['train']['example'] 
 
-        # Toy model 
-        model = gnn.toy_gnn_distributed(halo_swap_mode = self.cfg.halo_swap_mode,
-                                        name = 'TOY_RANK_%d_SIZE_%d' %(RANK,SIZE))
+        # # Toy model 
+        # model = gnn.toy_gnn_distributed(halo_swap_mode = self.cfg.halo_swap_mode,
+        #                                 name = 'TOY_RANK_%d_SIZE_%d' %(RANK,SIZE))
 
-        # # Full model 
-        # model = gnn.mp_gnn_distributed(input_channels = sample.x.shape[1], 
-        #                    hidden_channels = self.hidden_channels,
-        #                    output_channels = sample.y.shape[1],
-        #                    n_mlp_layers = [3,3,3], 
-        #                    n_messagePassing_layers = 5,
-        #                    activation = F.elu,
-        #                    halo_swap_mode = self.cfg.halo_swap_mode, 
-        #                    name = 'RANK_%d_SIZE_%d' %(RANK,SIZE))
+        # Full model 
+        model = gnn.mp_gnn_distributed(input_channels = sample.x.shape[1], 
+                           hidden_channels = self.hidden_channels,
+                           output_channels = sample.y.shape[1],
+                           n_mlp_layers = [3,3,3], 
+                           n_messagePassing_layers = 5,
+                           activation = F.elu,
+                           halo_swap_mode = self.cfg.halo_swap_mode, 
+                           name = 'RANK_%d_SIZE_%d' %(RANK,SIZE))
         
         return model
 
@@ -536,8 +536,8 @@ class Trainer:
         main_path = self.cfg.gnn_outputs_path
         path_to_x = main_path + 'fld_u_time_10.0_rank_%d_size_%d' %(RANK,SIZE)
         path_to_y = main_path + 'fld_u_time_10.0_rank_%d_size_%d' %(RANK,SIZE)
-        data_x = np.loadtxt(path_to_x, dtype=NP_FLOAT_DTYPE)[:,0:1]
-        data_y = np.loadtxt(path_to_y, dtype=NP_FLOAT_DTYPE)[:,0:1] 
+        data_x = np.loadtxt(path_to_x, dtype=NP_FLOAT_DTYPE)#[:,0:1]
+        data_y = np.loadtxt(path_to_y, dtype=NP_FLOAT_DTYPE)#[:,0:1] 
 
         # Retain only N_gll = Np*Ne elements
         N_gll = self.data_full.pos.shape[0] 
@@ -1106,24 +1106,10 @@ class Trainer:
 
         # time.sleep(2)
 
-        # Toy GNN 
-        out_gnn = self.model(x = data.x,
-                             edge_index = data.edge_index,
-                             edge_weight = data.edge_weight,
-                             halo_info = data.halo_info,
-                             mask_send = self.mask_send,
-                             mask_recv = self.mask_recv,
-                             buffer_send = self.buffer_send,
-                             buffer_recv = self.buffer_recv,
-                             neighboring_procs = self.neighboring_procs,
-                             SIZE = SIZE,
-                             batch = data.batch)
-
-        # # Full GNN 
+        # # Toy GNN 
         # out_gnn = self.model(x = data.x,
         #                      edge_index = data.edge_index,
         #                      edge_weight = data.edge_weight,
-        #                      pos = data.pos, 
         #                      halo_info = data.halo_info,
         #                      mask_send = self.mask_send,
         #                      mask_recv = self.mask_recv,
@@ -1132,6 +1118,20 @@ class Trainer:
         #                      neighboring_procs = self.neighboring_procs,
         #                      SIZE = SIZE,
         #                      batch = data.batch)
+
+        # Full GNN 
+        out_gnn = self.model(x = data.x,
+                             edge_index = data.edge_index,
+                             edge_weight = data.edge_weight,
+                             pos = data.pos, 
+                             halo_info = data.halo_info,
+                             mask_send = self.mask_send,
+                             mask_recv = self.mask_recv,
+                             buffer_send = self.buffer_send,
+                             buffer_recv = self.buffer_recv,
+                             neighboring_procs = self.neighboring_procs,
+                             SIZE = SIZE,
+                             batch = data.batch)
 
         # Accumulate loss
         target = data.x
@@ -1207,11 +1207,9 @@ class Trainer:
         else:
             path_desc = 'float32'
         
-        #savepath = self.cfg.work_dir + '/outputs/postproc/not_periodic_after_fix/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/%s' %(path_desc)
-        #savepath = self.cfg.work_dir + '/outputs/postproc/periodic_before_fix/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/%s' %(path_desc)
-        #savepath = self.cfg.work_dir + '/outputs/postproc/periodic_after_fix/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/%s' %(path_desc)
+        savepath = self.cfg.work_dir + '/outputs/postproc/real_gnn/periodic_after_fix/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/%s' %(path_desc)
         
-        #torch.save(grad_dict, savepath + '/%s.tar' %(model.get_save_header()))
+        torch.save(grad_dict, savepath + '/%s.tar' %(model.get_save_header()))
 
 
 
