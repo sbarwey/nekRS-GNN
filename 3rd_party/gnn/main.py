@@ -534,8 +534,8 @@ class Trainer:
 
         # Load data 
         main_path = self.cfg.gnn_outputs_path
-        path_to_x = main_path + 'fld_u_time_10.0_rank_%d_size_%d' %(RANK,SIZE)
-        path_to_y = main_path + 'fld_u_time_10.0_rank_%d_size_%d' %(RANK,SIZE)
+        path_to_x = main_path + 'fld_u_time_0.0_rank_%d_size_%d' %(RANK,SIZE)
+        path_to_y = main_path + 'fld_u_time_0.0_rank_%d_size_%d' %(RANK,SIZE)
         data_x = np.loadtxt(path_to_x, dtype=NP_FLOAT_DTYPE)#[:,0:1]
         data_y = np.loadtxt(path_to_y, dtype=NP_FLOAT_DTYPE)#[:,0:1] 
 
@@ -1207,9 +1207,9 @@ class Trainer:
         else:
             path_desc = 'float32'
         
-        savepath = self.cfg.work_dir + '/outputs/postproc/real_gnn/periodic_after_fix/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/%s' %(path_desc)
+        # savepath = self.cfg.work_dir + '/outputs/postproc/real_gnn/periodic_after_fix/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/%s' %(path_desc)
         
-        torch.save(grad_dict, savepath + '/%s.tar' %(model.get_save_header()))
+        # torch.save(grad_dict, savepath + '/%s.tar' %(model.get_save_header()))
 
 
 

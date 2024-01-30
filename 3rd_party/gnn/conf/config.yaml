@@ -45,7 +45,8 @@ model_dir: ${work_dir}/saved_models/
 
 
 # specify path to gnn_outputs here (case directory)  
-gnn_outputs_path: /Volumes/Novus_SB_14TB/ml/nekRS-GNN-devel/examples/tgv/gnn_outputs_distributed_gnn/after_fieldOffset_fix/gnn_outputs_poly_1/
+gnn_outputs_path: /Users/sbarwey/Files/solvers/nekRS-GNN-devel/examples/tgv_1d_8/gnn_outputs_poly_1/
+#gnn_outputs_path: /Volumes/Novus_SB_14TB/ml/nekRS-GNN-devel/examples/tgv/gnn_outputs_distributed_gnn/after_fieldOffset_fix/gnn_outputs_poly_1/
 #gnn_outputs_path: /Volumes/Novus_SB_14TB/ml/nekRS-GNN-devel/examples/tgv_wall/gnn_outputs_poly_1/
 #gnn_outputs_path: /Users/sbarwey/Files/temp/tgv_wall/gnn_outputs_poly_1/
 #gnn_outputs_path: /Volumes/Novus_SB_14TB/ml/nekRS-GNN-devel/examples/tgv/gnn_outputs_distributed_gnn/before_fieldOffset_fix/gnn_outputs_poly_1/
