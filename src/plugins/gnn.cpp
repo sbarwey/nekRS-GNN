@@ -185,6 +185,11 @@ void gnn_t::get_node_masks()
         }
     }
 
+    // SB: test 
+    if (verbose) printf("[RANK %d] -- \tN: %d \n", rank, N);
+    if (verbose) printf("[RANK %d] -- \tNlocal: %d \n", rank, Nlocal);
+    if (verbose) printf("[RANK %d] -- \tNhalo: %d \n", rank, Nhalo);
+
     // ~~~~ For parsing the local coincident nodes
     if (Nlocal)
     {
@@ -224,7 +229,16 @@ void gnn_t::get_node_masks()
             localNodes[i].owned = s;
         }
         NlocalGather++;
-    
+ 
+
+        // // SB: testing things out 
+        // for (dlong i=0; i < Nlocal; i++)
+        // {
+        //     if (verbose) printf("[RANK %d] --- Local ID: %d \t Global ID: %d \t New ID: %d \n", 
+        //             rank, localNodes[i].localId, localNodes[i].baseId, localNodes[i].newId);
+        // }
+        std::cout << "[RANK  " << rank << "] -- NlocalGather: " << NlocalGather << std::endl;
+   
         // ~~~~ get the mask to move from coincident to non-coincident representation.
         // first, sort based on local ids
         qsort(localNodes, Nlocal, sizeof(parallelNode_t), compareLocalId); 
@@ -245,6 +259,7 @@ void gnn_t::get_node_masks()
                 local_unique_mask[i] = 0;
             }
         }
+
         // Loop through local coincident nodes
         // -- THIS DOES NOT INCLUDE HALO NODES
         for (dlong i=0; i < Nlocal; i++)
@@ -258,8 +273,8 @@ void gnn_t::get_node_masks()
 
         // ~~~~ Add additional graph node neighbors for coincident LOCAL nodes 
         // Store the coincident node Ids  
-        std::vector<dlong> coincidentOwn[NlocalGather];
-        std::vector<std::vector<dlong>> coincidentNei[NlocalGather];
+        std::vector<dlong> coincidentOwn[NlocalGather]; // each element is a vector of localIds belonging to the same globalID 
+        std::vector<std::vector<dlong>> coincidentNei[NlocalGather]; // each element is a vector of vectors, containing the neighbor IDs of the corresponding localIDs. 
         for (dlong i = 0; i < Nlocal; i++)
         {
             // get the newID:
@@ -278,52 +293,285 @@ void gnn_t::get_node_masks()
             coincidentNei[nid].push_back(node.nbrIds); // each element contains a vector 
         }
 
-        
-        // loop through NlocalGather  
-        cnt = num_edges; 
-        for (dlong i = 0; i < NlocalGather; i++)
+        // populate hash-table for global-to-local ID lookups 
+        std::unordered_map<dlong, std::set<dlong>> globalToLocalMap;
+        for (dlong i = 0; i < Nlocal; ++i)
         {
-            // get the owner vector 
-            std::vector<dlong> idx_own_vec = coincidentOwn[i];
+            dlong lid = localNodes[i].localId;
+            dlong gid = localNodes[i].baseId; 
+            globalToLocalMap[gid].insert(lid);
+        }
 
-            // skip if size is 1 
-            if (idx_own_vec.size() == 1)
+        // // loop through Nlocal 
+        // //if (rank == 0) 
+        // // SB: print out, before mod 
+        // printf("\n\n\n");
+        // for (dlong i = 0; i < NlocalGather; i++)
+        // {
+        //     // if (verbose) printf("Local ID: %d \t Global ID: %d \t New ID: %d \n", 
+        //     //        localNodes[i].localId, localNodes[i].baseId, localNodes[i].newId);
+        //     printf("coincidentOwn[%d] size: %d \n", i, coincidentOwn[i].size());
+
+        //     if (i == 7)
+        //     {
+        //         for (int j = 0; j < coincidentOwn[i].size(); j++)
+        //         {
+        //             printf("\t localId: %d \n", coincidentOwn[i][j]);
+        //             dlong idx_own = coincidentOwn[i][j];
+        //             graphNode_t node = graphNodes[idx_own];
+
+        //             // loop through graph neighbors 
+        //             for (int k = 0; k < node.nbrIds.size(); k++)
+        //             {
+        //                 printf("\t\t nbrId: %d \t baseID: %d \n", node.nbrIds[k], graphNodes[node.nbrIds[k]].baseId);
+        //             }
+        //             // for (int k = 0; k < coincidentNei[i][j].size(); k++)
+        //             // {
+        //             //     printf("\t\t nbrIds: %d \n", coincidentNei[i][j][k]);
+        //             // }
+        //         }
+        //     }
+        // }
+
+        // SB: new neighbor modification 
+        cnt = num_edges; 
+        for (dlong i = 0; i < Nlocal; i++)
+        {
+            dlong lid = localNodes[i].localId; // localId of node  
+            dlong nid = localNodes[i].newId; // newID of node  
+            dlong gid = localNodes[i].baseId; // globalID of node 
+
+            graphNode_t node_i = graphNodes[lid]; // graph node 
+            
+            // printf("node_%d -- localId = %d \t newId = %d \n", i, lid, nid);
+            std::vector<dlong> same_ids = coincidentOwn[nid]; 
+
+            for (dlong j = 0; j < same_ids.size(); j++)
             {
-                continue;
-            }
+                graphNode_t node_j = graphNodes[same_ids[j]]; // graph node that has same local id  
+                
+                // printf("\t node_%d -- localId = %d \t same_ids[j] = %d \t newId = %d \n", j, node_j.localId, same_ids[j], nid);
 
-            // get the list of neighbor vectors 
-            std::vector<std::vector<dlong>> list_nei_vec = coincidentNei[i];
-
-            int n_pairs = idx_own_vec.size();
-
-            // loop through owners:  
-            // if (rank == 0) std::cout << "i = " << i << "\tentering loop!" << std::endl;
-            for (int j = 0; j < n_pairs; j++)
-            {
-                // loop through neighbors
-                for (int k = 0; k < n_pairs; k++)
-                {
-                    if (j == k)
+                if (node_j.localId != node_i.localId) // if they are different nodes 
+                { 
+                    for (dlong k = 0; k < node_j.nbrIds.size(); k++) // loop through node j nei
                     {
-                        continue; // skip redundant pair 
-                    }        
-                    
-                    dlong idx_own = idx_own_vec[j]; // get the owner id  
-                    std::vector<dlong> idx_nei_vec = list_nei_vec[k]; // get the neighbor ids 
-
-                    // store the extra edges 
-                    for (int l = 0; l < idx_nei_vec.size(); l++)
-                    {
-                        dlong idx_nei = idx_nei_vec[l];
-                        graphNodes[idx_own].nbrIds.push_back(idx_nei);
-                        cnt += 1;
+                        if (std::find(  graphNodes[lid].nbrIds.begin(), 
+                                        graphNodes[lid].nbrIds.end(), 
+                                        node_j.nbrIds[k]  ) != graphNodes[lid].nbrIds.end() ) 
+                        {
+                            // node_j.nbrIds[k] is present in nbrIds, so skip 
+                            continue; 
+                        } 
+                        else // node_j.nbrIds[k] is not present in nbrIds, so add 
+                        {
+                            if (node_i.localId != node_j.nbrIds[k]) // no self-loops 
+                            { 
+                                graphNodes[lid].nbrIds.push_back( node_j.nbrIds[k] );
+                                num_edges++; 
+                            }
+                        }
                     }
-                }        
+                }
             }
+
+            // Append neighbor list with all other nodes sharing same global Id
+            for (dlong j = 0; j < graphNodes[lid].nbrIds.size(); j++)
+            {
+                dlong added_id_local = graphNodes[lid].nbrIds[j]; // local id of nei 
+                dlong added_id_global = graphNodes[added_id_local].baseId; // global id of nei 
+                for (dlong additional_id : globalToLocalMap[added_id_global]) // for all local ids with the same global id as "added_id_global" 
+                {
+                    if (std::find(  graphNodes[lid].nbrIds.begin(), 
+                                    graphNodes[lid].nbrIds.end(), 
+                                    additional_id  ) != graphNodes[lid].nbrIds.end() ) 
+                    {
+                        // additional_id is present in nbrIds, so skip 
+                        continue; 
+                    } 
+                    else // additional_id is not present in nbrIds, so add 
+                    {
+                        if (graphNodes[lid].localId != additional_id) // no self-loops 
+                        { 
+                            graphNodes[lid].nbrIds.push_back( additional_id );
+                            num_edges++; 
+                        }
+                    }
+                }
+            }
+
         }
         num_edges = cnt; 
         
+    
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // SB  -- testing hash table 
+        // std::vector<int> localNodeIDs = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+        // std::vector<int> globalNodeIDs = {1, 1, 2, 3, 3, 3, 4, 4, 5, 5};
+        // 
+        // // Hash map to map global IDs to sets of local IDs
+        // std::unordered_map<dlong, std::set<dlong>> globalToLocalMap;
+        // for (dlong i = 0; i < Nlocal; ++i)
+        // {
+        //     dlong lid = localNodes[i].localId;
+        //     dlong gid = localNodes[i].baseId; 
+        //     globalToLocalMap[gid].insert(lid);
+        // }
+        // // Function to print local IDs for a given global ID
+        // auto printLocalIDs = [&](int globalID) {
+        // if (globalToLocalMap.find(globalID) != globalToLocalMap.end()) {
+        //     std::cout << "Local IDs for global ID " << globalID << ": ";
+        //     for (int localID : globalToLocalMap[globalID]) {
+        //         std::cout << localID << " ";
+        //     }
+        //     std::cout << std::endl;
+        // } else {
+        //     std::cout << "No local IDs found for global ID " << globalID << std::endl;
+        // }
+        // };
+        // printLocalIDs(8); // Replace 3 with any global ID you want to lookup
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+
+        // ~~~~ // // loop through NlocalGather  
+        // ~~~~ // cnt = num_edges; 
+        // ~~~~ // for (dlong i = 0; i < NlocalGather; i++)
+        // ~~~~ // {
+        // ~~~~ //     // get the owner vector 
+        // ~~~~ //     std::vector<dlong> idx_own_vec = coincidentOwn[i]; // list of local node IDs of same global ID 
+
+        // ~~~~ //     // skip if size is 1 
+        // ~~~~ //     if (idx_own_vec.size() == 1)
+        // ~~~~ //     {
+        // ~~~~ //         continue;
+        // ~~~~ //     }
+
+        // ~~~~ //     // get the list of neighbor vectors 
+        // ~~~~ //     std::vector<std::vector<dlong>> list_nei_vec = coincidentNei[i];
+        // ~~~~ //     int n_pairs = idx_own_vec.size();
+        // ~~~~ // 
+        // ~~~~ //     // loop through owners:  
+        // ~~~~ //     // if (rank == 0) std::cout << "i = " << i << "\tentering loop!" << std::endl;
+        // ~~~~ //     for (int j = 0; j < n_pairs; j++)
+        // ~~~~ //     {
+        // ~~~~ //         // loop through neighbors
+        // ~~~~ //         for (int k = 0; k < n_pairs; k++)
+        // ~~~~ //         {
+        // ~~~~ //             if (j == k)
+        // ~~~~ //             {
+        // ~~~~ //                 continue; // skip redundant pair 
+        // ~~~~ //             }        
+        // ~~~~ //             
+        // ~~~~ //             dlong idx_own = idx_own_vec[j]; // get the owner id  
+        // ~~~~ //             std::vector<dlong> idx_nei_vec = list_nei_vec[k]; // get the neighbor ids 
+        // ~~~~ //             
+        // ~~~~ //             // store the extra edges 
+        // ~~~~ //             for (int l = 0; l < idx_nei_vec.size(); l++)
+        // ~~~~ //             {
+        // ~~~~ //                 dlong idx_nei = idx_nei_vec[l]; // the neighbor local ID 
+        // ~~~~ //                 
+        // ~~~~ //                 // SB: the problem: localNodes is of size Nlocal. Can't use idx_nei 
+        // ~~~~ //                 dlong nei_newId = localNodes[idx_nei].newId; // the newId for the neighbor  
+        // ~~~~ //                 
+
+        // ~~~~ //                 // // The vector of all nodes that share the same newId as the neighbor:  
+        // ~~~~ //                 // std::vector<dlong> full_neighbor_vec;
+        // ~~~~ //                 // try {
+        // ~~~~ //                 //     std::vector<dlong> full_neighbor_vec = coincidentOwn[nei_newId];
+        // ~~~~ //                 // }
+        // ~~~~ //                 // catch (const std::bad_array_new_length& e) {
+        // ~~~~ //                 //     std::cerr << "Caught exception: " << e.what() << std::endl;
+        // ~~~~ //                 // }
+        // ~~~~ //                 
+        // ~~~~ //                 std::vector<dlong> full_neighbor_vec = coincidentOwn[nei_newId];
+        // ~~~~ //                 
+        // ~~~~ //                 // Add all of these
+        // ~~~~ //                 for (int r = 0; r < full_neighbor_vec.size(); r++)
+        // ~~~~ //                 {
+        // ~~~~ //                     graphNodes[idx_own].nbrIds.push_back(full_neighbor_vec[r]);
+        // ~~~~ //                     cnt += 1;
+        // ~~~~ //                 }
+        // ~~~~ //             }
+        // ~~~~ //         }        
+        // ~~~~ //     }
+        // ~~~~ // }
+        // ~~~~ // num_edges = cnt; 
+
+
+        // ~~~~ // // SB: original neighbor modification
+        // ~~~~ // // loop through NlocalGather  
+        // ~~~~ // cnt = num_edges; 
+        // ~~~~ // for (dlong i = 0; i < NlocalGather; i++)
+        // ~~~~ // {
+        // ~~~~ //     // get the owner vector 
+        // ~~~~ //     std::vector<dlong> idx_own_vec = coincidentOwn[i]; // list of local node IDs of same global ID 
+
+        // ~~~~ //     // skip if size is 1 
+        // ~~~~ //     if (idx_own_vec.size() == 1)
+        // ~~~~ //     {
+        // ~~~~ //         continue;
+        // ~~~~ //     }
+
+        // ~~~~ //     // get the list of neighbor vectors 
+        // ~~~~ //     std::vector<std::vector<dlong>> list_nei_vec = coincidentNei[i];
+        // ~~~~ //     int n_pairs = idx_own_vec.size();
+
+        // ~~~~ //     // loop through owners:  
+        // ~~~~ //     // if (rank == 0) std::cout << "i = " << i << "\tentering loop!" << std::endl;
+        // ~~~~ //     for (int j = 0; j < n_pairs; j++)
+        // ~~~~ //     {
+        // ~~~~ //         // loop through neighbors
+        // ~~~~ //         for (int k = 0; k < n_pairs; k++)
+        // ~~~~ //         {
+        // ~~~~ //             if (j == k)
+        // ~~~~ //             {
+        // ~~~~ //                 continue; // skip redundant pair 
+        // ~~~~ //             }        
+        // ~~~~ //             
+        // ~~~~ //             dlong idx_own = idx_own_vec[j]; // get the owner id  
+        // ~~~~ //             std::vector<dlong> idx_nei_vec = list_nei_vec[k]; // get the neighbor ids 
+
+        // ~~~~ //             // store the extra edges 
+        // ~~~~ //             for (int l = 0; l < idx_nei_vec.size(); l++)
+        // ~~~~ //             {
+        // ~~~~ //                 dlong idx_nei = idx_nei_vec[l];
+        // ~~~~ //                 graphNodes[idx_own].nbrIds.push_back(idx_nei);
+        // ~~~~ //                 cnt += 1;
+        // ~~~~ //             }
+        // ~~~~ //         }        
+        // ~~~~ //     }
+        // ~~~~ // }
+        // ~~~~ // num_edges = cnt; 
+
+        // // SB: print out, after mod 
+        // printf("\n\n\n");
+        // for (dlong i = 0; i < NlocalGather; i++)
+        // {
+        //     // if (verbose) printf("Local ID: %d \t Global ID: %d \t New ID: %d \n", 
+        //     //        localNodes[i].localId, localNodes[i].baseId, localNodes[i].newId);
+        //     printf("coincidentOwn[%d] size: %d \n", i, coincidentOwn[i].size());
+
+        //     if (i == 7)
+        //     {
+        //         for (int j = 0; j < coincidentOwn[i].size(); j++)
+        //         {
+        //             printf("\t localId: %d \n", coincidentOwn[i][j]);
+        //             dlong idx_own = coincidentOwn[i][j];
+        //             graphNode_t node = graphNodes[idx_own];
+
+        //             // loop through graph neighbors 
+        //             for (int k = 0; k < node.nbrIds.size(); k++)
+        //             {
+        //                 printf("\t\t nbrId: %d \t baseID: %d \n", node.nbrIds[k], graphNodes[node.nbrIds[k]].baseId);
+        //             }
+        //             // for (int k = 0; k < coincidentNei[i][j].size(); k++)
+        //             // {
+        //             //     printf("\t\t nbrIds: %d \n", coincidentNei[i][j][k]);
+        //             // }
+        //         }
+        //     }
+        // }
     }
     else // dummy 
     {
