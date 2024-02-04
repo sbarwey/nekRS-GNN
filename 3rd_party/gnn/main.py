@@ -49,8 +49,8 @@ from prettytable import PrettyTable
 
 log = logging.getLogger(__name__)
 
-TORCH_FLOAT_DTYPE = torch.float64
-NP_FLOAT_DTYPE = np.float64
+TORCH_FLOAT_DTYPE = torch.float32
+NP_FLOAT_DTYPE = np.float32
 
 # Get MPI:
 try:
@@ -1177,7 +1177,7 @@ class Trainer:
         effective_edges_local = torch.tensor(data.edge_weight.sum())
         effective_edges = distnn.all_reduce(effective_edges_local)
 
-        #log.info('[RANK %d] Loss: %g' %(RANK, loss.item()))
+        log.info('[RANK %d] Loss: %g' %(RANK, loss.item()))
         #log.info('[RANK %d] QoI in scaled: %g' %(RANK, total_sum_x_scaled.item()))
         log.info(f'[RANK {RANK}] : Input dtype : {data.x.dtype}')
         log.info(f'[RANK {RANK}] : Output dtype : {out_gnn.dtype}')
@@ -1201,6 +1201,7 @@ class Trainer:
         grad_dict["total_sum_x_scaled"] = total_sum_x_scaled
         grad_dict["total_sum_y_scaled"] = total_sum_y_scaled
         grad_dict["effective_nodes"] = effective_nodes
+        grad_dict["effective_edges"] = effective_edges
 
         if (TORCH_FLOAT_DTYPE == torch.float64):
             path_desc = 'float64'
@@ -1208,10 +1209,11 @@ class Trainer:
             path_desc = 'float32'
         
         # savepath = self.cfg.work_dir + '/outputs/postproc/real_gnn/periodic_after_fix/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/%s' %(path_desc)
+        # savepath = self.cfg.work_dir + '/outputs/postproc/real_gnn/periodic_after_fix_edges/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/%s' %(path_desc)
+        # savepath = self.cfg.work_dir + '/outputs/postproc/real_gnn/periodic_after_fix_edges/gradient_data_cpu_nondeterministic_LOCAL/tgv_18_poly_1/%s' %(path_desc)
+        savepath = self.cfg.work_dir + '/outputs/postproc/real_gnn/periodic_after_fix_edges/gradient_data_cpu_nondeterministic_LOCAL/tgv_2d_18_poly_1/%s' %(path_desc)
         
-        # torch.save(grad_dict, savepath + '/%s.tar' %(model.get_save_header()))
-
-
+        torch.save(grad_dict, savepath + '/%s.tar' %(model.get_save_header()))
 
 
 

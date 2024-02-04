@@ -282,8 +282,8 @@ if __name__ == "__main__":
     # ~~~~ LOOKING AT NODE SUMMATION OF (A) INPUT TO GNN, and (B) OUTPUT OF GNN 
     if 1 == 1: 
     
-        path_32 = "./outputs/postproc/real_gnn/periodic_after_fix/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/float32"
-        path_64 = "./outputs/postproc/real_gnn/periodic_after_fix/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/float64"
+        path_32 = "./outputs/postproc/real_gnn/periodic_after_fix_edges/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/float32"
+        path_64 = "./outputs/postproc/real_gnn/periodic_after_fix_edges/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/float64"
 
         SIZE_LIST = [1,2,4,8] 
         #SIZE_LIST = [1,2,4,8,16,32] 
@@ -299,8 +299,8 @@ if __name__ == "__main__":
             data_32[halo_mode] = []  
             data_64[halo_mode] = []  
             for SIZE in SIZE_LIST:
-                data_temp_32 = np.zeros((SIZE,5))
-                data_temp_64 = np.zeros((SIZE,5))
+                data_temp_32 = np.zeros((SIZE,6))
+                data_temp_64 = np.zeros((SIZE,6))
                 for RANK in range(SIZE): 
                     
                     # Toy gnn 
@@ -313,16 +313,18 @@ if __name__ == "__main__":
                     str_temp = "RANK_%d_SIZE_%d_input_channels_3_hidden_channels_32_output_channels_3_nMessagePassingLayers_5_halo_%s.tar" %(RANK, SIZE, halo_mode) 
 
                     a = torch.load(path_32 + "/" + str_temp, map_location=torch.device('cpu')) 
-                    #data_temp_32[RANK, :3] = a['total_sum_x_scaled']
-                    data_temp_32[RANK, :3] = a['total_sum_y_scaled']
+                    data_temp_32[RANK, :3] = a['total_sum_x_scaled']
+                    #data_temp_32[RANK, :3] = a['total_sum_y_scaled']
                     data_temp_32[RANK, 3] = a['effective_nodes']
                     data_temp_32[RANK, 4] = a['loss']
+                    #data_temp_32[RANK, 5] = a['effective_edges']
 
                     a = torch.load(path_64 + "/" + str_temp, map_location=torch.device('cpu')) 
-                    #data_temp_64[RANK, :3] = a['total_sum_x_scaled']
-                    data_temp_64[RANK, :3] = a['total_sum_y_scaled']
+                    data_temp_64[RANK, :3] = a['total_sum_x_scaled']
+                    #data_temp_64[RANK, :3] = a['total_sum_y_scaled']
                     data_temp_64[RANK, 3] = a['effective_nodes']
                     data_temp_64[RANK, 4] = a['loss']
+                    #data_temp_64[RANK, 5] = a['effective_edges']
 
 
                 data_32[halo_mode].append(data_temp_32)
@@ -332,7 +334,7 @@ if __name__ == "__main__":
         ms=200
         colors={'none': 'red', 'all_to_all': 'blue'}
         ls={'none': '-', 'all_to_all': '-.'}
-        fig, ax = plt.subplots(1,3,figsize=(14,5))
+        fig, ax = plt.subplots(1,3,figsize=(16,5))
         for comp in range(3):
             for i in range(len(SIZE_LIST)): 
                 for halo_mode in HALO_MODE_LIST: 
