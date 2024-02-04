@@ -71,6 +71,7 @@ private:
     void get_edge_index();
     void write_edge_index(const std::string& filename);
     void write_edge_index_element_local(const std::string& filename);
+    void write_edge_index_element_local_vertex(const std::string& filename);
 
     // for prints 
     bool verbose = true; 

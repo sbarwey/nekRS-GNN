@@ -102,6 +102,7 @@ void gnn_t::gnnWrite()
     std::string nranks = "_size_" + std::to_string(size);
     write_edge_index(writePath + "/edge_index" + irank + nranks);
     write_edge_index_element_local(writePath + "/edge_index_element_local" + irank + nranks);
+    write_edge_index_element_local_vertex(writePath + "/edge_index_element_local_vertex" + irank + nranks);
     writeToFile(writePath + "/pos_node" + irank + nranks, pos_node, N, 3);
     writeToFile(writePath + "/node_element_ids" + irank + nranks, node_element_ids, N, 1); 
     writeToFile(writePath + "/local_unique_mask" + irank + nranks, local_unique_mask, N, 1); 
@@ -763,3 +764,28 @@ void gnn_t::write_edge_index_element_local(const std::string& filename)
         }
     }           
 } 
+
+void gnn_t::write_edge_index_element_local_vertex(const std::string& filename)
+{
+    if (verbose) printf("[RANK %d] -- in write_edge_index_element_local() \n", rank);
+
+    std::cout << "Writing file: " << filename << std::endl;
+    std::ofstream file_cpu(filename);
+    if (!file_cpu.is_open())
+    {
+        std::cout << "Error opening file." << std::endl;
+        exit(1);
+    }
+
+    // loop through vertex node indices 
+    int n_vertex_nodes = 8; 
+    for (int i = 0; i < n_vertex_nodes; i++)
+    {
+        dlong idx_own = mesh->vertexNodes[i];  
+        for (int j = 0; j < n_vertex_nodes; j++)
+        {
+            dlong idx_nei = mesh->vertexNodes[j]; 
+            file_cpu << idx_nei << '\t' << idx_own << '\n';
+        }
+    }
+}
