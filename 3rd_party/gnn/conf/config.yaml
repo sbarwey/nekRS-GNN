@@ -45,17 +45,12 @@ model_dir: ${work_dir}/saved_models/
 
 
 # specify path to gnn_outputs here (case directory)  
-gnn_outputs_path: /Users/sbarwey/Files/solvers/nekRS-GNN-devel/examples/tgv_2d_18/gnn_outputs_poly_1/
+#gnn_outputs_path: /Users/sbarwey/Files/solvers/nekRS-GNN-devel/examples/tgv_2d_8_periodic_x/gnn_outputs_poly_1/
+#gnn_outputs_path: /Users/sbarwey/Files/solvers/nekRS-GNN-devel/examples/tgv_2d_18_periodic_x/gnn_outputs_poly_1/
+#gnn_outputs_path: /Users/sbarwey/Files/solvers/nekRS-GNN-devel/examples/tgv_2d_18_periodic_x_y/gnn_outputs_poly_1/
+#gnn_outputs_path: /Users/sbarwey/Files/solvers/nekRS-GNN-devel/examples/tgv_2d_18/gnn_outputs_poly_1/
+#gnn_outputs_path: /Users/sbarwey/Files/solvers/nekRS-GNN-devel/examples/tgv_1d_18/gnn_outputs_poly_1/
 #gnn_outputs_path: /Users/sbarwey/Files/solvers/nekRS-GNN-devel/examples/tgv_18/gnn_outputs_poly_1/
 #gnn_outputs_path: /Users/sbarwey/Files/solvers/nekRS-GNN-devel/examples/tgv/gnn_outputs_poly_1/
-#gnn_outputs_path: /Users/sbarwey/Files/solvers/nekRS-GNN-devel/examples/tgv_1d_8/gnn_outputs_poly_1/
-#gnn_outputs_path: /Volumes/Novus_SB_14TB/ml/nekRS-GNN-devel/examples/tgv/gnn_outputs_distributed_gnn/after_fieldOffset_fix/gnn_outputs_poly_1/
-#gnn_outputs_path: /Volumes/Novus_SB_14TB/ml/nekRS-GNN-devel/examples/tgv_wall/gnn_outputs_poly_1/
-#gnn_outputs_path: /Users/sbarwey/Files/temp/tgv_wall/gnn_outputs_poly_1/
-#gnn_outputs_path: /Volumes/Novus_SB_14TB/ml/nekRS-GNN-devel/examples/tgv/gnn_outputs_distributed_gnn/before_fieldOffset_fix/gnn_outputs_poly_1/
-#gnn_outputs_path: /Volumes/Novus_SB_14TB/ml/nekRS-GNN-devel/examples/tgv/gnn_outputs_distributed_gnn/after_fieldOffset_fix/gnn_outputs_poly_1/
-
-#gnn_outputs_path: /lus/eagle/projects/datascience/sbarwey/codes/nek/nekRS-GNN-devel/examples/tgv/gnn_outputs_distributed_gnn/gnn_outputs_poly_1/
-#gnn_outputs_path: /lus/eagle/projects/datascience/sbarwey/codes/nek/nekRS-GNN-devel/examples/tgv/gnn_outputs_distributed_gnn/gnn_outputs_poly_7/
-#gnn_outputs_path: /lus/eagle/projects/datascience/sbarwey/codes/nek/nekRS-GNN-devel/examples/hemi_gnn/gnn_outputs_poly_9/
-#gnn_outputs_path: /lus/eagle/projects/datascience/sbarwey/codes/nek/nekrs_cases/examples_v23/toy_graph_1d/gnn_outputs/
+#gnn_outputs_path: /Volumes/Novus_SB_14TB/nek/nekrs_cases/examples_v23_gnn/tgv/gnn_outputs_distributed_gnn/after_edge_fix/gnn_outputs_poly_1/
+gnn_outputs_path: /Volumes/Novus_SB_14TB/nek/nekrs_cases/examples_v23_gnn/tgv/gnn_outputs_distributed_gnn/after_edge_fix/gnn_outputs_poly_3/

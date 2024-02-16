@@ -49,8 +49,8 @@ from prettytable import PrettyTable
 
 log = logging.getLogger(__name__)
 
-TORCH_FLOAT_DTYPE = torch.float32
-NP_FLOAT_DTYPE = np.float32
+TORCH_FLOAT_DTYPE = torch.float64
+NP_FLOAT_DTYPE = np.float64
 
 # Get MPI:
 try:
@@ -273,10 +273,6 @@ class Trainer:
         return
 
     def build_model(self) -> nn.Module:
-        # ~~~~ Toy model 
-        #model = gnn.toy_gnn()
-        #model = gnn.toy_gnn_distributed()
-
         # ~~~~ Actual model 
         if RANK == 0:
             log.info('In build_model...')
@@ -462,7 +458,10 @@ class Trainer:
         
         # ~~~~ Get positions and global node index
         if self.cfg.verbose: log.info('[RANK %d]: Loading positions and global node index' %(RANK))
-        pos = np.loadtxt(path_to_pos_full, dtype=np.float32)
+        pos = np.loadtxt(path_to_pos_full, dtype=NP_FLOAT_DTYPE) # SB: check this 
+        #pos = np.zeros_like(pos) # SB: checking to see if pos is the issue 
+        pos = np.cos(pos) # SB: positional encoding for periodic case 
+
         gli = np.loadtxt(path_to_glob_ids, dtype=np.int64).reshape((-1,1))
 
         # ~~~~ Get edge index
@@ -472,8 +471,6 @@ class Trainer:
         # ~~~~ Get local unique mask
         if self.cfg.verbose: log.info('[RANK %d]: Loading local unique mask' %(RANK))
         local_unique_mask = np.loadtxt(path_to_unique_local, dtype=np.int64)
-
-        print('CHECK --- local_unique_mask.shape: ', local_unique_mask.shape)
 
         # ~~~~ Get halo unique mask
         halo_unique_mask = np.array([])
@@ -534,10 +531,13 @@ class Trainer:
 
         # Load data 
         main_path = self.cfg.gnn_outputs_path
-        path_to_x = main_path + 'fld_u_time_0.0_rank_%d_size_%d' %(RANK,SIZE)
-        path_to_y = main_path + 'fld_u_time_0.0_rank_%d_size_%d' %(RANK,SIZE)
+        path_to_x = main_path + 'fld_u_time_10.0_rank_%d_size_%d' %(RANK,SIZE)
+        path_to_y = main_path + 'fld_u_time_10.0_rank_%d_size_%d' %(RANK,SIZE)
         data_x = np.loadtxt(path_to_x, dtype=NP_FLOAT_DTYPE)#[:,0:1]
         data_y = np.loadtxt(path_to_y, dtype=NP_FLOAT_DTYPE)#[:,0:1] 
+
+        # ones  
+        # data_x = np.ones_like(data_x) # sb: ones 
 
         # Retain only N_gll = Np*Ne elements
         N_gll = self.data_full.pos.shape[0] 
@@ -1168,6 +1168,11 @@ class Trainer:
         sum_y_scaled = y_scaled.sum(axis=0)
         total_sum_y_scaled = distnn.all_reduce(sum_y_scaled)
 
+        # Scaled sum of positions 
+        pos_scaled = data.pos[:n_nodes_local, :]/data.node_degree[:n_nodes_local].unsqueeze(-1)
+        sum_pos_scaled = pos_scaled.sum(axis=0)
+        total_sum_pos_scaled = distnn.all_reduce(sum_pos_scaled)
+
         # Sum of n_nodes_local 
         n_nodes = distnn.all_reduce(n_nodes_local)
 
@@ -1200,6 +1205,7 @@ class Trainer:
         grad_dict["loss"] = loss.item()
         grad_dict["total_sum_x_scaled"] = total_sum_x_scaled
         grad_dict["total_sum_y_scaled"] = total_sum_y_scaled
+        grad_dict["total_sum_pos_scaled"] = total_sum_pos_scaled
         grad_dict["effective_nodes"] = effective_nodes
         grad_dict["effective_edges"] = effective_edges
 
@@ -1208,15 +1214,23 @@ class Trainer:
         else:
             path_desc = 'float32'
         
-        # savepath = self.cfg.work_dir + '/outputs/postproc/real_gnn/periodic_after_fix/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/%s' %(path_desc)
-        # savepath = self.cfg.work_dir + '/outputs/postproc/real_gnn/periodic_after_fix_edges/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/%s' %(path_desc)
-        # savepath = self.cfg.work_dir + '/outputs/postproc/real_gnn/periodic_after_fix_edges/gradient_data_cpu_nondeterministic_LOCAL/tgv_18_poly_1/%s' %(path_desc)
-        savepath = self.cfg.work_dir + '/outputs/postproc/real_gnn/periodic_after_fix_edges/gradient_data_cpu_nondeterministic_LOCAL/tgv_2d_18_poly_1/%s' %(path_desc)
+        #savepath = self.cfg.work_dir + '/outputs/postproc/real_gnn_test/periodic_after_fix_edges_2/gradient_data_cpu_nondeterministic_LOCAL/tgv_2d_18_poly_1/%s' %(path_desc)
+        #savepath = self.cfg.work_dir + '/outputs/postproc/real_gnn_test/periodic_after_fix_edges_2/gradient_data_cpu_nondeterministic_LOCAL/tgv_18_poly_1/%s' %(path_desc)
+        #savepath = self.cfg.work_dir + '/outputs/postproc/real_gnn_test_2/periodic_after_fix_edges_2/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/%s' %(path_desc)
+        savepath = self.cfg.work_dir + '/outputs/postproc/real_gnn_test_2/periodic_after_fix_edges_2/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_3/%s' %(path_desc)
+
+        # if path doesnt exist, make it 
+        if RANK == 0:
+            if not os.path.exists(savepath):
+                os.makedirs(savepath)
+                print("Directory created by root processor.")
+            else:
+                print("Directory already exists.")
+
+        # Synchronize all processors
+        COMM.Barrier()
         
         torch.save(grad_dict, savepath + '/%s.tar' %(model.get_save_header()))
-
-
-
 
         # # save model 
         # if SIZE == 1:

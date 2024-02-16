@@ -24,7 +24,8 @@ class toy_gnn_distributed(torch.nn.Module):
         super().__init__()
         self.edge_aggregator = EdgeAggregation(aggr='add') # for edge aggregation 
         #self.w_mp = nn.Parameter(torch.randn(1)) # GNN parameter 
-        self.w_mp = nn.Parameter(torch.tensor([0.5])) # GNN parameter 
+        #self.w_mp = nn.Parameter(torch.tensor([0.5])) # GNN parameter 
+        self.w_mp = nn.Parameter(torch.tensor([1.0])) # GNN parameter 
         self.halo_swap_mode = halo_swap_mode
         self.name = name 
 

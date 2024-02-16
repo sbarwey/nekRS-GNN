@@ -4,7 +4,6 @@ plt.rcParams.update({'font.size': 22})
 
 import torch
 
-
 def get_grad_data(SIZE, keys, halo_mode_list):
     DATA_FULL = []
     for RANK in range(SIZE):
@@ -31,7 +30,6 @@ def get_grad_data(SIZE, keys, halo_mode_list):
 
 if __name__ == "__main__":
 
-
     if 1 == 0:
         # Load model and plot loss 
         a = torch.load('saved_models/model.tar')
@@ -50,7 +48,8 @@ if __name__ == "__main__":
     if 1 == 0: 
         
         #data_path = './outputs/postproc/gradient_data/tgv_poly_1'
-        data_path = './outputs/postproc/gradient_data_gpu_nondeterministic_repeat/tgv_poly_1/float64'
+        #data_path = './outputs/postproc/gradient_data_gpu_nondeterministic_repeat/tgv_poly_1/float64'
+        data_path = './outputs/postproc/gradient_data_gpu_nondeterministic_repeat/tgv_2d_18_poly_1/float64'
         #data_path = './outputs/postproc/gradient_data_cpu_nondeterministic/tgv_poly_1'
         #data_path = './outputs/postproc/gradient_data_cpu_deterministic/tgv_poly_1'
         #data_path = './outputs/postproc/gradient_data/hemi_poly_9'
@@ -281,11 +280,21 @@ if __name__ == "__main__":
 
     # ~~~~ LOOKING AT NODE SUMMATION OF (A) INPUT TO GNN, and (B) OUTPUT OF GNN 
     if 1 == 1: 
-    
-        path_32 = "./outputs/postproc/real_gnn/periodic_after_fix_edges/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/float32"
-        path_64 = "./outputs/postproc/real_gnn/periodic_after_fix_edges/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/float64"
+
+        # no cos(pos), no edge fix 
+        # path_32 = "./outputs/postproc/real_gnn/periodic_after_fix/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/float32"
+        # path_64 = "./outputs/postproc/real_gnn/periodic_after_fix/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/float64"
+
+        # with pos=0, with edge fix 
+        # path_32 = "./outputs/postproc/real_gnn_test/periodic_after_fix_edges_2/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/float32"
+        # path_64 = "./outputs/postproc/real_gnn_test/periodic_after_fix_edges_2/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/float64"
+
+        # with cos(pos), with edge fix 
+        path_32 = "./outputs/postproc/real_gnn_test_2/periodic_after_fix_edges_2/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/float32"
+        path_64 = "./outputs/postproc/real_gnn_test_2/periodic_after_fix_edges_2/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/float64"
 
         SIZE_LIST = [1,2,4,8] 
+        SIZE_LIST = [1,2,4] 
         #SIZE_LIST = [1,2,4,8,16,32] 
         HALO_MODE_LIST = ['none', 'all_to_all']
         #HALO_MODE_LIST = ['all_to_all']
@@ -303,29 +312,30 @@ if __name__ == "__main__":
                 data_temp_64 = np.zeros((SIZE,6))
                 for RANK in range(SIZE): 
                     
-                    # Toy gnn 
+                    # # Toy gnn 
                     # str_temp = "TOY_RANK_%d_SIZE_%d_halo_%s.tar" %(RANK, SIZE, halo_mode) 
 
                     # Real gnn input channels 1 output channels 1  
-                    # str_temp = "RANK_%d_SIZE_%d_input_channels_1_hidden_channels_32_output_channels_1_nMessagePassingLayers_5_halo_%s.tar" %(RANK, SIZE, halo_mode) 
+                    # str_temp = "RANK_%d_SIZE_%d_input_channels_1_hidden_channels_1_output_channels_1_nMessagePassingLayers_5_halo_%s.tar" %(RANK, SIZE, halo_mode) 
                     
                     # Real gnn input channels 3 output channels 3
                     str_temp = "RANK_%d_SIZE_%d_input_channels_3_hidden_channels_32_output_channels_3_nMessagePassingLayers_5_halo_%s.tar" %(RANK, SIZE, halo_mode) 
 
                     a = torch.load(path_32 + "/" + str_temp, map_location=torch.device('cpu')) 
-                    data_temp_32[RANK, :3] = a['total_sum_x_scaled']
-                    #data_temp_32[RANK, :3] = a['total_sum_y_scaled']
+                    #data_temp_32[RANK, :3] = a['total_sum_x_scaled']
+                    data_temp_32[RANK, :3] = a['total_sum_y_scaled']
+                    #data_temp_32[RANK, :3] = a['total_sum_pos_scaled']
                     data_temp_32[RANK, 3] = a['effective_nodes']
                     data_temp_32[RANK, 4] = a['loss']
-                    #data_temp_32[RANK, 5] = a['effective_edges']
+                    data_temp_32[RANK, 5] = a['effective_edges']
 
                     a = torch.load(path_64 + "/" + str_temp, map_location=torch.device('cpu')) 
-                    data_temp_64[RANK, :3] = a['total_sum_x_scaled']
-                    #data_temp_64[RANK, :3] = a['total_sum_y_scaled']
+                    #data_temp_64[RANK, :3] = a['total_sum_x_scaled']
+                    data_temp_64[RANK, :3] = a['total_sum_y_scaled']
+                    #data_temp_64[RANK, :3] = a['total_sum_pos_scaled']
                     data_temp_64[RANK, 3] = a['effective_nodes']
                     data_temp_64[RANK, 4] = a['loss']
-                    #data_temp_64[RANK, 5] = a['effective_edges']
-
+                    data_temp_64[RANK, 5] = a['effective_edges']
 
                 data_32[halo_mode].append(data_temp_32)
                 data_64[halo_mode].append(data_temp_64)
@@ -339,13 +349,12 @@ if __name__ == "__main__":
             for i in range(len(SIZE_LIST)): 
                 for halo_mode in HALO_MODE_LIST: 
                     SIZE = SIZE_LIST[i]
-
-                    ax[comp].scatter(np.ones(SIZE)*SIZE, data_32[halo_mode][i][:,4], marker='^', 
+                    ax[comp].scatter(np.ones(SIZE)*SIZE, data_32[halo_mode][i][:,comp], marker='^', 
                                color=colors[halo_mode], s=ms, facecolors='none',
                                linestyle=ls[halo_mode], linewidth=1.5,
                                label="CPU, FP32" if i == 0 else None)
 
-                    ax[comp].scatter(np.ones(SIZE)*SIZE, data_64[halo_mode][i][:,4], marker='s', 
+                    ax[comp].scatter(np.ones(SIZE)*SIZE, data_64[halo_mode][i][:,comp], marker='s', 
                                color=colors[halo_mode], s=ms, facecolors='none', 
                                linestyle=ls[halo_mode], linewidth=1.5, 
                                label="CPU, FP64" if i == 0 else None)
@@ -381,8 +390,3 @@ if __name__ == "__main__":
         # #ax.legend(fancybox=False, framealpha=1, edgecolor='black', prop={'size': 14})
         # ax.set_ylim([0.0763, 0.0768])
         # plt.show(block=False)
-
-
-
-
-
