@@ -73,6 +73,9 @@ private:
     void write_edge_index_element_local(const std::string& filename);
     void write_edge_index_element_local_vertex(const std::string& filename);
 
+    // binary write functions 
+    void write_edge_index_element_local_vertex_binary(const std::string& filename);
+
     // for prints 
     bool verbose = true; 
 
