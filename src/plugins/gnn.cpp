@@ -28,6 +28,28 @@ void writeToFile(const std::string& filename, T* data, int nRows, int nCols)
     }
 }
 
+template <typename T>
+void writeToFileBinary(const std::string& filename, T* data, int nRows, int nCols)
+{
+    std::cout << "Writing file (binary): " << filename << std::endl;
+    std::ofstream file_cpu(filename, std::ios::binary);
+    if (!file_cpu.is_open())
+    {
+        std::cout << "Error opening file." << std::endl;
+        exit(1);
+    }
+
+    // Write to file:
+    for (int i = 0; i < nRows; i++)
+    {
+        for (int j = 0; j < nCols; j++)
+        {
+            int index = j * nRows + i;
+            file_cpu.write(reinterpret_cast<const char*>(&data[index]), sizeof(T));
+        }
+    }
+}
+
 gnn_t::gnn_t(nrs_t *nrs_)
 {
     nrs = nrs_; // set nekrs object
@@ -100,14 +122,31 @@ void gnn_t::gnnWrite()
     dlong N = mesh->Nelements * mesh->Np; // total number of nodes 
     std::string irank = "_rank_" + std::to_string(rank);
     std::string nranks = "_size_" + std::to_string(size);
-    write_edge_index(writePath + "/edge_index" + irank + nranks);
+
+    // // Writing as text files:
+    // write_edge_index(writePath + "/edge_index" + irank + nranks);
+    // writeToFile(writePath + "/pos_node" + irank + nranks, pos_node, N, 3);
+    // writeToFile(writePath + "/node_element_ids" + irank + nranks, node_element_ids, N, 1); 
+    // writeToFile(writePath + "/local_unique_mask" + irank + nranks, local_unique_mask, N, 1); 
+    // writeToFile(writePath + "/halo_unique_mask" + irank + nranks, halo_unique_mask, N, 1); 
+    // writeToFile(writePath + "/global_ids" + irank + nranks, mesh->globalIds, N, 1);
+
+    // Writing as binary files: 
+    write_edge_index_binary(writePath + "/edge_index" + irank + nranks + ".bin");
+    writeToFileBinary(writePath + "/pos_node" + irank + nranks + ".bin", pos_node, N, 3);
+    writeToFileBinary(writePath + "/node_element_ids" + irank + nranks + ".bin", node_element_ids, N, 1); 
+    writeToFileBinary(writePath + "/local_unique_mask" + irank + nranks + ".bin", local_unique_mask, N, 1); 
+    writeToFileBinary(writePath + "/halo_unique_mask" + irank + nranks + ".bin", halo_unique_mask, N, 1); 
+    writeToFileBinary(writePath + "/global_ids" + irank + nranks + ".bin", mesh->globalIds, N, 1);
+
+    // Writing number of elements, gll points per element, and product of the two  
+    writeToFile(writePath + "/Nelements" + irank + nranks, &mesh->Nelements, 1, 1);
+    writeToFile(writePath + "/Np" + irank + nranks, &mesh->Np, 1, 1);
+    writeToFile(writePath + "/N" + irank + nranks, &N, 1, 1);
+
+    // Writing element-local edge index as text file (small)
     write_edge_index_element_local(writePath + "/edge_index_element_local" + irank + nranks);
     write_edge_index_element_local_vertex(writePath + "/edge_index_element_local_vertex" + irank + nranks);
-    writeToFile(writePath + "/pos_node" + irank + nranks, pos_node, N, 3);
-    writeToFile(writePath + "/node_element_ids" + irank + nranks, node_element_ids, N, 1); 
-    writeToFile(writePath + "/local_unique_mask" + irank + nranks, local_unique_mask, N, 1); 
-    writeToFile(writePath + "/halo_unique_mask" + irank + nranks, halo_unique_mask, N, 1); 
-    writeToFile(writePath + "/global_ids" + irank + nranks, mesh->globalIds, N, 1);
 }
 
 void gnn_t::get_node_positions()
@@ -580,6 +619,36 @@ void gnn_t::write_edge_index(const std::string& filename)
     }           
 }
 
+void gnn_t::write_edge_index_binary(const std::string& filename)
+{
+    if (verbose) printf("[RANK %d] -- in write_edge_index() \n", rank);
+
+    std::cout << "Writing file: " << filename << std::endl;
+    std::ofstream file_cpu(filename, std::ios::binary);
+    if (!file_cpu.is_open())
+    {
+        std::cout << "Error opening file." << std::endl;
+        exit(1);
+    }
+
+    dlong N = mesh->Nelements * mesh->Np; // total number of nodes
+                    
+    // loop through graph nodes
+    for (int i = 0; i < N; i++)
+    {               
+        int num_nbr = graphNodes[i].nbrIds.size();
+        dlong idx_own = graphNodes[i].localId; 
+                    
+        for (int j = 0; j < num_nbr; j++)
+        {           
+            dlong idx_nei = graphNodes[i].nbrIds[j];  
+            // file_cpu << idx_nei << '\t' << idx_own << '\n'; 
+            file_cpu.write(reinterpret_cast<const char*>(&idx_nei), sizeof(dlong));
+            file_cpu.write(reinterpret_cast<const char*>(&idx_own), sizeof(dlong));
+        }
+    }           
+}
+
 void gnn_t::write_edge_index_element_local(const std::string& filename)
 {
     if (verbose) printf("[RANK %d] -- in write_edge_index_element_local() \n", rank);
@@ -633,6 +702,27 @@ void gnn_t::write_edge_index_element_local_vertex(const std::string& filename)
 
 void gnn_t::write_edge_index_element_local_vertex_binary(const std::string& filename)
 {
+    if (verbose) printf("[RANK %d] -- in write_edge_index_element_local_vertex_binary() \n", rank);
 
+    std::cout << "Writing file: " << filename << std::endl;
+    std::ofstream file_cpu(filename, std::ios::binary);
+    if (!file_cpu.is_open())
+    {
+        std::cout << "Error opening file." << std::endl;
+        exit(1);
+    }
 
+    // loop through vertex node indices 
+    int n_vertex_nodes = 8; 
+    for (int i = 0; i < n_vertex_nodes; i++)
+    {
+        dlong idx_own = mesh->vertexNodes[i];  
+        for (int j = 0; j < n_vertex_nodes; j++)
+        {
+            dlong idx_nei = mesh->vertexNodes[j]; 
+            // file_cpu << idx_nei << '\t' << idx_own << '\n';
+            file_cpu.write(reinterpret_cast<const char*>(&idx_nei), sizeof(dlong));
+            file_cpu.write(reinterpret_cast<const char*>(&idx_own), sizeof(dlong));
+        }
+    }
 }

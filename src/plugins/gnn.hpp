@@ -20,6 +20,9 @@ typedef struct {
 template <typename T> 
 void writeToFile(const std::string& filename, T* data, int nRows, int nCols); 
 
+template <typename T> 
+void writeToFileBinary(const std::string& filename, T* data, int nRows, int nCols); 
+
 int compareBaseId(const void *a, const void *b);
 int compareLocalId(const void *a, const void *b);  
 
@@ -59,7 +62,7 @@ private:
     int size;
 
     // Graph attributes
-    dlong num_edges; 
+    hlong num_edges; 
 
     // member functions 
     void get_graph_nodes();
@@ -74,6 +77,7 @@ private:
     void write_edge_index_element_local_vertex(const std::string& filename);
 
     // binary write functions 
+    void write_edge_index_binary(const std::string& filename);
     void write_edge_index_element_local_vertex_binary(const std::string& filename);
 
     // for prints 
