@@ -57,4 +57,7 @@ model_dir: ${work_dir}/saved_models/
 
 
 # Polaris 
-gnn_outputs_path: /lus/eagle/projects/datascience/sbarwey/codes/nek/nekrs_cases/examples_v23_gnn/tgv/gnn_outputs_distributed_gnn/gnn_outputs_poly_3/
+gnn_outputs_path: /lus/eagle/projects/datascience/sbarwey/codes/nek/nekrs_cases/examples_v23_gnn/tgv/gnn_outputs_distributed_gnn/gnn_outputs_poly_7/
+
+
+
