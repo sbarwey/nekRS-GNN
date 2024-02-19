@@ -1217,7 +1217,8 @@ class Trainer:
         #savepath = self.cfg.work_dir + '/outputs/postproc/real_gnn_test/periodic_after_fix_edges_2/gradient_data_cpu_nondeterministic_LOCAL/tgv_2d_18_poly_1/%s' %(path_desc)
         #savepath = self.cfg.work_dir + '/outputs/postproc/real_gnn_test/periodic_after_fix_edges_2/gradient_data_cpu_nondeterministic_LOCAL/tgv_18_poly_1/%s' %(path_desc)
         #savepath = self.cfg.work_dir + '/outputs/postproc/real_gnn_test_2/periodic_after_fix_edges_2/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/%s' %(path_desc)
-        savepath = self.cfg.work_dir + '/outputs/postproc/real_gnn_test_3/periodic_after_fix_edges_2/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/%s' %(path_desc)
+        #savepath = self.cfg.work_dir + '/outputs/postproc/real_gnn_test_3/periodic_after_fix_edges_2/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/%s' %(path_desc)
+        savepath = self.cfg.work_dir + '/outputs/postproc/real_gnn_test_3/periodic_after_fix_edges_2/gradient_data_gpu_nondeterministic_POLARIS/tgv_poly_3/%s' %(path_desc)
 
         # if path doesnt exist, make it 
         if RANK == 0:
