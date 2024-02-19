@@ -31,7 +31,9 @@ def get_grad_data(SIZE, keys, halo_mode_list):
 if __name__ == "__main__":
 
     if 1 == 0:
-        # Load model and plot loss 
+        """
+        Load model and plot loss 
+        """
         a = torch.load('saved_models/model.tar')
         loss_train = a['loss_hist_train']
 
@@ -45,112 +47,10 @@ if __name__ == "__main__":
         ax.set_title('Training Demo -- Single Snapshot (Periodic Hill)')
         plt.show(block=False)
 
-    if 1 == 0: 
-        
-        #data_path = './outputs/postproc/gradient_data/tgv_poly_1'
-        #data_path = './outputs/postproc/gradient_data_gpu_nondeterministic_repeat/tgv_poly_1/float64'
-        data_path = './outputs/postproc/gradient_data_gpu_nondeterministic_repeat/tgv_2d_18_poly_1/float64'
-        #data_path = './outputs/postproc/gradient_data_cpu_nondeterministic/tgv_poly_1'
-        #data_path = './outputs/postproc/gradient_data_cpu_deterministic/tgv_poly_1'
-        #data_path = './outputs/postproc/gradient_data/hemi_poly_9'
-        #data_path = './outputs/postproc/gradient_data/tgv_poly_7'
-
-        #halo_mode_list = ['all_to_all', 'sendrecv', 'none']
-        halo_mode_list = ['all_to_all', 'none']
-        halo_color = ['black', 'blue', 'red']
-
-        # get dict keys 
-        SIZE = 16
-        for RANK in range(SIZE):
-            for halo_mode in halo_mode_list:
-                model_name = 'RANK_%d_SIZE_%d_input_channels_3_hidden_channels_32_output_channels_3_nMessagePassingLayers_5_halo_%s.tar' %(RANK,SIZE,halo_mode)
-                a = torch.load(data_path + '/' + model_name, map_location=torch.device('cpu'))
-                keys = list(a.keys())
-                keys.remove('loss')
-                break
-
-        # Load the baseline -- SIZE 1 
-        SIZE_1 = get_grad_data(SIZE=1, keys=keys, halo_mode_list=halo_mode_list) 
-        SIZE_2 = get_grad_data(SIZE=2, keys=keys, halo_mode_list=halo_mode_list)
-        SIZE_4 = get_grad_data(SIZE=4, keys=keys, halo_mode_list=halo_mode_list)
-        SIZE_8 = get_grad_data(SIZE=8, keys=keys, halo_mode_list=halo_mode_list)
-        SIZE_16 = get_grad_data(SIZE=16, keys=keys, halo_mode_list=halo_mode_list)
-        #SIZE_32 = get_grad_data(SIZE=32, keys=keys)
-
-        # # Plot: loss versus n_gpus  
-        # SIZE_LIST = [1,2,4,8,16,32]
-        # DATA_LIST = [SIZE_1, SIZE_2, SIZE_4, SIZE_8, SIZE_16, SIZE_32]
-
-        SIZE_LIST = [1,2,4,8,16]
-        DATA_LIST = [SIZE_1, SIZE_2, SIZE_4, SIZE_8, SIZE_16]
-
-        #SIZE_LIST = [2,4,8, 16, 32]
-        #DATA_LIST = [SIZE_2, SIZE_4, SIZE_8, SIZE_16, SIZE_32]
-
-        #SIZE_LIST = [16, 32]
-        #DATA_LIST = [SIZE_16, SIZE_32]
-
-        # Loss plots 
-        fig, ax = plt.subplots(figsize=(7,6))
-        for i in range(len(SIZE_LIST)): 
-            SIZE = SIZE_LIST[i]
-            DATA = DATA_LIST[i]
-            for RANK in range(SIZE):
-                for k in range(len(halo_mode_list)):
-                    halo_mode = halo_mode_list[k]
-                    color = halo_color[k]
-                    ax.plot(SIZE, DATA[RANK][halo_mode]['loss'], marker='o', ms=10, color=color) 
-
-        ax.set_xlim([0.8,64])
-        ax.set_xlabel('N GPUs')
-        ax.set_ylabel('Loss')
-        ax.set_xscale('log')
-        plt.show(block=False)
-
-        # # Weight gradient norm 
-        # fig, ax = plt.subplots()
-        # for i in range(len(SIZE_LIST)): 
-        #     SIZE = SIZE_LIST[i]
-        #     DATA = DATA_LIST[i]
-        #     for RANK in range(SIZE):
-        #         for k in range(len(halo_mode_list)):
-        #             halo_mode = halo_mode_list[k]
-        #             color = halo_color[k]
-        #             ax.plot(SIZE, DATA[RANK][halo_mode]['grad'].norm(), marker='o', ms=10, color=color) 
-
-        # ax.set_xlim([0.8,64])
-        # ax.set_xscale('log')
-        # ax.set_xlabel('N GPUs')
-        # ax.set_ylabel('Weight gradient norm')
-        # plt.show(block=False)
-
-
-        # # Weight gradient PDF  
-        # bins = 500
-        # lw = 2
-        # fig, ax = plt.subplots()
-        # #a = np.histogram(np.log(np.abs(SIZE_4[3]['all_to_all']['grad'])), bins=bins)
-        # a = np.histogram(np.log(np.abs(SIZE_16[3]['all_to_all']['grad'])), bins=bins)
-        # ax.plot(a[1][:-1], a[0], color='black', label='Baseline', lw=lw)
-
-        # #a = np.histogram(np.log(np.abs(SIZE_16[0]['all_to_all']['grad'])), bins=bins)
-        # a = np.histogram(np.log(np.abs(SIZE_32[0]['all_to_all']['grad'])), bins=bins)
-        # ax.plot(a[1][:-1], a[0], label='with halo', lw=lw)
-
-        # #a = np.histogram(np.log(np.abs(SIZE_16[0]['sendrecv']['grad'])), bins=bins)
-        # #ax.plot(a[1][:-1], a[0], label='send_recv', lw=lw)
-
-        # #a = np.histogram(np.log(np.abs(SIZE_16[0]['none']['grad'])), bins=bins)
-        # a = np.histogram(np.log(np.abs(SIZE_32[0]['none']['grad'])), bins=bins)
-        # ax.plot(a[1][:-1], a[0], label='no halo', lw=lw)
-
-        # ax.set_xlabel('log(abs(Weight gradient))')
-        # ax.legend()
-        # plt.show(block=False)
-
-
-    # Model weight comparisons -- are the models the same? 
     if 1 == 0:
+        """
+        Model weight comparisons -- are the models the same? 
+        """
         data_path = './outputs/postproc/models/tgv_poly_1'
         SIZE_LIST = [1,2,4,8,16]
         halo_mode = 'all_to_all'
@@ -170,117 +70,10 @@ if __name__ == "__main__":
         ax.plot(DATA_FULL, marker='o')
         plt.show(block=False)
 
-
-    # ~~~~ LOOKING AT LOSS METRIC 
     if 1 == 0: 
-    
-        path_gpu_32 = "./outputs/postproc/gradient_data_gpu_nondeterministic_repeat/tgv_poly_1/float32"
-        path_cpu1_32 = "./outputs/postproc/gradient_data_cpu_nondeterministic/tgv_poly_1/float32"
-        #path_cpu2_32 = "./outputs/postproc/gradient_data_cpu_deterministic/tgv_poly_1/float32"
-        path_cpu2_32 = "./outputs/postproc/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/float32"
-        path_gpu_64 = "./outputs/postproc/gradient_data_gpu_nondeterministic_repeat/tgv_poly_1/float64"
-        path_cpu1_64 = "./outputs/postproc/gradient_data_cpu_nondeterministic/tgv_poly_1/float64"
-        #path_cpu2_64 = "./outputs/postproc/gradient_data_cpu_deterministic/tgv_poly_1/float64"
-        path_cpu2_64 = "./outputs/postproc/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/float64"
-
-
-        #SIZE_LIST = [1,2,4,8,16,32] 
-        SIZE_LIST = [1,2,4,8]
-        HALO_MODE_LIST = ['none', 'all_to_all']
-
-        data_gpu_32 = {} 
-        data_cpu1_32 = {}
-        data_cpu2_32 = {}
-        data_gpu_64 = {}
-        data_cpu1_64 = {}
-        data_cpu2_64 = {} 
-
-        for halo_mode in HALO_MODE_LIST: 
-            data_gpu_32[halo_mode] = []  
-            data_cpu1_32[halo_mode] = []  
-            data_cpu2_32[halo_mode] = []  
-
-            data_gpu_64[halo_mode] = []  
-            data_cpu1_64[halo_mode] = []  
-            data_cpu2_64[halo_mode] = []  
-
-            for SIZE in SIZE_LIST:
-                data_temp_gpu_32 = np.zeros(SIZE)
-                data_temp_cpu1_32 = np.zeros(SIZE)
-                data_temp_cpu2_32 = np.zeros(SIZE)
-                data_temp_gpu_64 = np.zeros(SIZE)
-                data_temp_cpu1_64 = np.zeros(SIZE)
-                data_temp_cpu2_64 = np.zeros(SIZE)
-                for RANK in range(SIZE): 
-                    
-                    str_temp = "RANK_%d_SIZE_%d_input_channels_3_hidden_channels_32_output_channels_3_nMessagePassingLayers_5_halo_%s.tar" %(RANK, SIZE, halo_mode) 
-
-                    # gpu_32
-                    a = torch.load(path_gpu_32 + "/" + str_temp, map_location=torch.device('cpu')) 
-                    data_temp_gpu_32[RANK] = a['loss']
-
-                    # cpu1_32
-                    a = torch.load(path_cpu1_32 + "/" + str_temp, map_location=torch.device('cpu')) 
-                    data_temp_cpu1_32[RANK] = a['loss']
-
-                    # cpu2_32
-                    a = torch.load(path_cpu2_32 + "/" + str_temp, map_location=torch.device('cpu')) 
-                    data_temp_cpu2_32[RANK] = a['loss']
-
-                    # gpu_64
-                    a = torch.load(path_gpu_64 + "/" + str_temp, map_location=torch.device('cpu')) 
-                    data_temp_gpu_64[RANK] = a['loss']
-
-                    # cpu1_64
-                    a = torch.load(path_cpu1_64 + "/" + str_temp, map_location=torch.device('cpu')) 
-                    data_temp_cpu1_64[RANK] = a['loss']
-
-                    # cpu2_64
-                    a = torch.load(path_cpu2_64 + "/" + str_temp, map_location=torch.device('cpu')) 
-                    data_temp_cpu2_64[RANK] = a['loss']
-
-
-                data_gpu_32[halo_mode].append(data_temp_gpu_32)
-                data_cpu1_32[halo_mode].append(data_temp_cpu1_32)
-                data_cpu2_32[halo_mode].append(data_temp_cpu2_32)
-                data_gpu_64[halo_mode].append(data_temp_gpu_64)
-                data_cpu1_64[halo_mode].append(data_temp_cpu1_64)
-                data_cpu2_64[halo_mode].append(data_temp_cpu2_64)
-
-
-        # Plot
-        ms=200
-        colors={'none': 'black', 'all_to_all': 'blue'}
-        fig, ax = plt.subplots()
-        for i in range(len(SIZE_LIST)): 
-            for halo_mode in HALO_MODE_LIST: 
-                SIZE = SIZE_LIST[i]
-
-                ax.scatter(np.ones(SIZE)*SIZE, data_gpu_32[halo_mode][i], marker='o', color=colors[halo_mode], s=ms, facecolors='none', 
-                           label="GPU, FP32" if i == 0 else None)
-
-                ax.scatter(np.ones(SIZE)*SIZE, data_cpu1_32[halo_mode][i], marker='s', color=colors[halo_mode], s=ms, facecolors='none', 
-                           label="CPU, FP32" if i == 0 else None)
-
-                ax.scatter(np.ones(SIZE)*SIZE, data_cpu2_32[halo_mode][i], marker='^', color=colors[halo_mode], s=ms, facecolors='none', 
-                           label="CPU, FP32, Det." if i == 0 else None)
-
-                # ax.scatter(np.ones(SIZE)*SIZE, data_gpu_64[halo_mode][i], marker='o', color=colors[halo_mode], s=ms, facecolors='none', 
-                #            label="GPU, FP64" if i == 0 else None)
-
-                # ax.scatter(np.ones(SIZE)*SIZE, data_cpu1_64[halo_mode][i], marker='s', color=colors[halo_mode], s=ms, facecolors='none', 
-                #            label="CPU, FP64" if i == 0 else None)
-
-                # ax.scatter(np.ones(SIZE)*SIZE, data_cpu2_64[halo_mode][i], marker='^', color=colors[halo_mode], s=ms, facecolors='none', 
-                #            label="CPU, FP64, Det." if i == 0 else None)
-
-        ax.set_xscale('log')
-        ax.legend(fancybox=False, framealpha=1, edgecolor='black', prop={'size': 14})
-        plt.show(block=False)
-
-    # ~~~~ LOOKING AT NODE SUMMATION OF (A) INPUT TO GNN, and (B) OUTPUT OF GNN 
-    if 1 == 1: 
-
+        """
+        Looking at consistency QoIs -- data produced from train_step_verification in main.py  
+        """
         # no cos(pos), no edge fix 
         # path_32 = "./outputs/postproc/real_gnn/periodic_after_fix/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/float32"
         # path_64 = "./outputs/postproc/real_gnn/periodic_after_fix/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/float64"
@@ -294,12 +87,16 @@ if __name__ == "__main__":
         # path_64 = "./outputs/postproc/real_gnn_test_2/periodic_after_fix_edges_2/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/float64"
 
         # with cos(pos), with edge fix, with binary read 
-        path_32 = "./outputs/postproc/real_gnn_test_3/periodic_after_fix_edges_2/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/float32"
-        path_64 = "./outputs/postproc/real_gnn_test_3/periodic_after_fix_edges_2/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/float64"
+        # path_32 = "./outputs/postproc/real_gnn_test_3/periodic_after_fix_edges_2/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/float32"
+        # path_64 = "./outputs/postproc/real_gnn_test_3/periodic_after_fix_edges_2/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/float64"
 
-        SIZE_LIST = [1,2,4,8] 
-        #SIZE_LIST = [1,2,4] 
+        # with cos(pos), with edge fix, with binary read -- polaris 
+        path_32 = "./outputs/postproc/real_gnn_test_3/periodic_after_fix_edges_2/gradient_data_gpu_nondeterministic_POLARIS/tgv_poly_5/float32"
+        path_64 = "./outputs/postproc/real_gnn_test_3/periodic_after_fix_edges_2/gradient_data_gpu_nondeterministic_POLARIS/tgv_poly_5/float32"
+
         #SIZE_LIST = [1,2,4,8,16,32] 
+        SIZE_LIST = [4,8,16,32] 
+        SIZE_LIST = [8,16,32] 
         HALO_MODE_LIST = ['none', 'all_to_all']
         #HALO_MODE_LIST = ['all_to_all']
         #HALO_MODE_LIST = ['sendrecv']
@@ -353,12 +150,12 @@ if __name__ == "__main__":
             for i in range(len(SIZE_LIST)): 
                 for halo_mode in HALO_MODE_LIST: 
                     SIZE = SIZE_LIST[i]
-                    ax[comp].scatter(np.ones(SIZE)*SIZE, data_32[halo_mode][i][:,comp], marker='^', 
+                    ax[comp].scatter(np.ones(SIZE)*SIZE, data_32[halo_mode][i][:,4], marker='^', 
                                color=colors[halo_mode], s=ms, facecolors='none',
                                linestyle=ls[halo_mode], linewidth=1.5,
                                label="CPU, FP32" if i == 0 else None)
 
-                    ax[comp].scatter(np.ones(SIZE)*SIZE, data_64[halo_mode][i][:,comp], marker='s', 
+                    ax[comp].scatter(np.ones(SIZE)*SIZE, data_64[halo_mode][i][:,4], marker='s', 
                                color=colors[halo_mode], s=ms, facecolors='none', 
                                linestyle=ls[halo_mode], linewidth=1.5, 
                                label="CPU, FP64" if i == 0 else None)
@@ -367,6 +164,8 @@ if __name__ == "__main__":
                     ax[comp].set_xlabel('Number of Ranks')
 
                     #ax[comp].set_ylim([0.0766, 0.0770])
+                    ax[comp].set_xlim([0.9, 40])
+                    ax[comp].set_xscale('log')
         #ax.set_xscale('log')
         #ax[0].legend(fancybox=False, framealpha=1, edgecolor='black', prop={'size': 14})
         plt.show(block=False)
@@ -394,3 +193,105 @@ if __name__ == "__main__":
         # #ax.legend(fancybox=False, framealpha=1, edgecolor='black', prop={'size': 14})
         # ax.set_ylim([0.0763, 0.0768])
         # plt.show(block=False)
+
+
+    if 1 == 1:
+        """
+        Looking at graph stats -- number of nodes, edges, etc. 
+        """
+
+        POLY_LIST = [1, 3, 5, 7]  
+        SIZE_LIST = [1, 2, 4, 8, 16, 32]
+
+        n_nodes_local = [] 
+        n_nodes_halo = []
+        n_edges = [] 
+        for i in range(len(POLY_LIST)):
+            POLY = POLY_LIST[i]
+            n_nodes_local.append([])
+            n_nodes_halo.append([])
+            n_edges.append([])
+            for j in range(len(SIZE_LIST)):
+                SIZE = SIZE_LIST[j]
+                n_nodes_local[i].append(np.zeros(SIZE))
+                n_nodes_halo[i].append(np.zeros(SIZE))
+                n_edges[i].append(np.zeros(SIZE))
+                for RANK in range(SIZE):
+                    str_temp = f"POLY_{POLY}_RANK_{RANK}_SIZE_{SIZE}_input_channels_3_hidden_channels_32_output_channels_3_nMessagePassingLayers_5_halo_all_to_all.tar"
+                    a = torch.load("./outputs/GraphStatistics/" + str_temp)
+                    
+                    n_nodes_local[i][j][RANK] = a['n_nodes_local'].item()
+                    n_nodes_halo[i][j][RANK] = a['n_nodes_halo'].item()
+                    n_edges[i][j][RANK] = a['n_edges']
+
+
+
+        # Local nodes per rank 
+        ms = 100
+        fig, ax = plt.subplots(figsize=(8,7))
+        for j in range(len(SIZE_LIST)):
+            SIZE = SIZE_LIST[j]
+            ax.scatter(SIZE*np.ones(SIZE), n_nodes_local[0][j], s=ms, color='black') 
+            ax.scatter(SIZE*np.ones(SIZE), n_nodes_local[1][j], s=ms, color='blue') 
+            ax.scatter(SIZE*np.ones(SIZE), n_nodes_local[2][j], s=ms, color='red') 
+            ax.scatter(SIZE*np.ones(SIZE), n_nodes_local[3][j], s=ms, color='green') 
+        ax.set_yscale('log')
+        ax.set_xscale('log')
+        ax.set_ylabel('Local Graph Nodes')
+        ax.set_xlabel('Ranks')
+        plt.show(block=False)
+
+        # Halo nodes per rank 
+        ms = 100
+        fig, ax = plt.subplots(figsize=(8,7))
+        for j in range(len(SIZE_LIST)):
+            SIZE = SIZE_LIST[j]
+            ax.scatter(SIZE*np.ones(SIZE), n_nodes_halo[0][j], s=ms, color='black') 
+            ax.scatter(SIZE*np.ones(SIZE), n_nodes_halo[1][j], s=ms, color='blue') 
+            ax.scatter(SIZE*np.ones(SIZE), n_nodes_halo[2][j], s=ms, color='red') 
+            ax.scatter(SIZE*np.ones(SIZE), n_nodes_halo[3][j], s=ms, color='green') 
+        ax.set_yscale('log')
+        ax.set_xscale('log')
+        ax.set_ylabel('Halo Graph Nodes')
+        ax.set_xlabel('Ranks')
+        plt.show(block=False)
+
+        # Total halo nodes (summed over all ranks)
+        ms = 100
+        fig, ax = plt.subplots(figsize=(8,7))
+        for j in range(len(SIZE_LIST)):
+            SIZE = SIZE_LIST[j]
+            ax.scatter(SIZE, np.sum(n_nodes_halo[0][j]), s=ms, color='black') 
+            ax.scatter(SIZE, np.sum(n_nodes_halo[1][j]), s=ms, color='blue') 
+            ax.scatter(SIZE, np.sum(n_nodes_halo[2][j]), s=ms, color='red') 
+            ax.scatter(SIZE, np.sum(n_nodes_halo[3][j]), s=ms, color='green') 
+        ax.set_yscale('log')
+        ax.set_xscale('log')
+        ax.set_ylabel('Total Halo Graph Nodes')
+        ax.set_xlabel('Ranks')
+        plt.show(block=False)
+
+
+        # Edges per rank 
+        ms = 100
+        fig, ax = plt.subplots(figsize=(8,7))
+        for j in range(len(SIZE_LIST)):
+            SIZE = SIZE_LIST[j]
+            ax.scatter(SIZE*np.ones(SIZE), n_edges[0][j], s=ms, color='black') 
+            ax.scatter(SIZE*np.ones(SIZE), n_edges[1][j], s=ms, color='blue') 
+            ax.scatter(SIZE*np.ones(SIZE), n_edges[2][j], s=ms, color='red') 
+            ax.scatter(SIZE*np.ones(SIZE), n_edges[3][j], s=ms, color='green') 
+        ax.set_yscale('log')
+        ax.set_xscale('log')
+        ax.set_ylabel('Graph Edges')
+        ax.set_xlabel('Ranks')
+        plt.show(block=False)
+
+
+
+
+
+
+
+
+
