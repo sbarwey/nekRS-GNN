@@ -458,24 +458,25 @@ class Trainer:
         
         # ~~~~ Get positions and global node index
         if self.cfg.verbose: log.info('[RANK %d]: Loading positions and global node index' %(RANK))
-        pos = np.loadtxt(path_to_pos_full, dtype=NP_FLOAT_DTYPE) # SB: check this 
-        #pos = np.zeros_like(pos) # SB: checking to see if pos is the issue 
+        pos = np.fromfile(path_to_pos_full + ".bin", dtype=np.float64).reshape((-1,3))
+        pos = pos.astype(NP_FLOAT_DTYPE)
         pos = np.cos(pos) # SB: positional encoding for periodic case 
 
-        gli = np.loadtxt(path_to_glob_ids, dtype=np.int64).reshape((-1,1))
+        gli = np.fromfile(path_to_glob_ids + ".bin", dtype=np.int64).reshape((-1,1))
 
         # ~~~~ Get edge index
         if self.cfg.verbose: log.info('[RANK %d]: Loading edge index' %(RANK))
-        ei = np.loadtxt(path_to_ei, dtype=np.int64).T
+        ei = np.fromfile(path_to_ei + ".bin", dtype=np.int32).reshape((-1,2)).T
+        ei = ei.astype(np.int64)
         
         # ~~~~ Get local unique mask
         if self.cfg.verbose: log.info('[RANK %d]: Loading local unique mask' %(RANK))
-        local_unique_mask = np.loadtxt(path_to_unique_local, dtype=np.int64)
+        local_unique_mask = np.fromfile(path_to_unique_local + ".bin", dtype=np.int32)
 
         # ~~~~ Get halo unique mask
         halo_unique_mask = np.array([])
         if SIZE > 1:
-            halo_unique_mask = np.loadtxt(path_to_unique_halo, dtype=np.int64)
+            halo_unique_mask = np.fromfile(path_to_unique_halo + ".bin", dtype=np.int32)
 
         # ~~~~ Make the full graph: 
         if self.cfg.verbose: log.info('[RANK %d]: Making the FULL GLL-based graph with overlapping nodes' %(RANK))
@@ -533,11 +534,10 @@ class Trainer:
         main_path = self.cfg.gnn_outputs_path
         path_to_x = main_path + 'fld_u_time_10.0_rank_%d_size_%d' %(RANK,SIZE)
         path_to_y = main_path + 'fld_u_time_10.0_rank_%d_size_%d' %(RANK,SIZE)
-        data_x = np.loadtxt(path_to_x, dtype=NP_FLOAT_DTYPE)#[:,0:1]
-        data_y = np.loadtxt(path_to_y, dtype=NP_FLOAT_DTYPE)#[:,0:1] 
-
-        # ones  
-        # data_x = np.ones_like(data_x) # sb: ones 
+        data_x = np.fromfile(path_to_x + ".bin", dtype=np.float64).reshape((-1,3))
+        data_x = data_x.astype(NP_FLOAT_DTYPE)
+        data_y = np.fromfile(path_to_y + ".bin", dtype=np.float64).reshape((-1,3))
+        data_y = data_y.astype(NP_FLOAT_DTYPE)
 
         # Retain only N_gll = Np*Ne elements
         N_gll = self.data_full.pos.shape[0] 
@@ -1217,7 +1217,7 @@ class Trainer:
         #savepath = self.cfg.work_dir + '/outputs/postproc/real_gnn_test/periodic_after_fix_edges_2/gradient_data_cpu_nondeterministic_LOCAL/tgv_2d_18_poly_1/%s' %(path_desc)
         #savepath = self.cfg.work_dir + '/outputs/postproc/real_gnn_test/periodic_after_fix_edges_2/gradient_data_cpu_nondeterministic_LOCAL/tgv_18_poly_1/%s' %(path_desc)
         #savepath = self.cfg.work_dir + '/outputs/postproc/real_gnn_test_2/periodic_after_fix_edges_2/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/%s' %(path_desc)
-        savepath = self.cfg.work_dir + '/outputs/postproc/real_gnn_test_2/periodic_after_fix_edges_2/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_3/%s' %(path_desc)
+        savepath = self.cfg.work_dir + '/outputs/postproc/real_gnn_test_3/periodic_after_fix_edges_2/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/%s' %(path_desc)
 
         # if path doesnt exist, make it 
         if RANK == 0:

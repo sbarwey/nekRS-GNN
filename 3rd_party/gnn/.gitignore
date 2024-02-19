@@ -2,6 +2,7 @@
 *.e*
 *.o*
 main.sh
+*.old
 
 # Postprocessing folders 
 figures/

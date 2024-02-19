@@ -13,13 +13,14 @@ import torch_geometric.nn as tgnn
 parser = argparse.ArgumentParser(description='Process command line arguments.')
 parser.add_argument('--SIZE', type=int, required=True, help='Specify the mpi world size corresponding to files in gnn_outputs directory.')
 parser.add_argument('--POLY', type=int, required=True, help='Specify the polynomial order.')
+parser.add_argument('--PATH', type=str, required=True, help='Specify the gnn_outputs folder path.')
 args = parser.parse_args()
 
 SIZE = args.SIZE
 POLY = args.POLY
 DIM = 3
 Np = (POLY+1)**DIM
-main_path = './gnn_outputs/' 
+main_path = args.PATH + '/' # './gnn_outputs/' 
 
 Ne_list = []
 graph_list = []
@@ -37,8 +38,8 @@ for RANK in range(SIZE):
 
     # ~~~~ Get positions and global node index  
     print('[RANK %d]: Loading positions and global node index' %(RANK))
-    pos = np.loadtxt(path_to_pos_full, dtype=np.float32)
-    gli = np.loadtxt(path_to_glob_ids, dtype=np.int64).reshape((-1,1))
+    pos = np.fromfile(path_to_pos_full + ".bin", dtype=np.float64).reshape((-1,3))
+    gli = np.fromfile(path_to_glob_ids + ".bin", dtype=np.int64).reshape((-1,1))
      
     # ~~~~ Back-out number of elements 
     Ne = int(pos.shape[0]/Np)
@@ -47,16 +48,17 @@ for RANK in range(SIZE):
 
     # ~~~~ Get edge index
     print('[RANK %d]: Loading edge index' %(RANK))
-    ei = np.loadtxt(path_to_ei, dtype=np.int64).T
+    ei = np.fromfile(path_to_ei + ".bin", dtype=np.int32).reshape((-1,2)).T
+    ei = ei.astype(np.int64)
 
     # ~~~~ Get local unique mask 
     print('[RANK %d]: Loading local unique mask' %(RANK))
-    local_unique_mask = np.loadtxt(path_to_unique, dtype=np.int64)
+    local_unique_mask = np.fromfile(path_to_unique + ".bin", dtype=np.int32)
 
     # ~~~~ Get halo unique mask 
     halo_unique_mask = np.array([])
     if SIZE > 1:
-        halo_unique_mask = np.loadtxt(path_to_unique_halo, dtype=np.int64)
+        halo_unique_mask = np.fromfile(path_to_unique_halo + ".bin", dtype=np.int32)
     
     # ~~~~ Make graph:
     print('[RANK %d]: Making graph' %(RANK))

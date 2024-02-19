@@ -290,11 +290,15 @@ if __name__ == "__main__":
         # path_64 = "./outputs/postproc/real_gnn_test/periodic_after_fix_edges_2/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/float64"
 
         # with cos(pos), with edge fix 
-        path_32 = "./outputs/postproc/real_gnn_test_2/periodic_after_fix_edges_2/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/float32"
-        path_64 = "./outputs/postproc/real_gnn_test_2/periodic_after_fix_edges_2/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/float64"
+        # path_32 = "./outputs/postproc/real_gnn_test_2/periodic_after_fix_edges_2/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/float32"
+        # path_64 = "./outputs/postproc/real_gnn_test_2/periodic_after_fix_edges_2/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/float64"
+
+        # with cos(pos), with edge fix, with binary read 
+        path_32 = "./outputs/postproc/real_gnn_test_3/periodic_after_fix_edges_2/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/float32"
+        path_64 = "./outputs/postproc/real_gnn_test_3/periodic_after_fix_edges_2/gradient_data_cpu_nondeterministic_LOCAL/tgv_poly_1/float64"
 
         SIZE_LIST = [1,2,4,8] 
-        SIZE_LIST = [1,2,4] 
+        #SIZE_LIST = [1,2,4] 
         #SIZE_LIST = [1,2,4,8,16,32] 
         HALO_MODE_LIST = ['none', 'all_to_all']
         #HALO_MODE_LIST = ['all_to_all']
