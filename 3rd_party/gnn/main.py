@@ -66,7 +66,7 @@ try:
     WITH_CUDA = torch.cuda.is_available()
 
     # Override gpu utilization
-    WITH_CUDA = False
+    # WITH_CUDA = False
 
     DEVICE = 'gpu' if WITH_CUDA else 'cpu'
     if DEVICE == 'gpu':
@@ -269,7 +269,7 @@ class Trainer:
                            hidden_channels = self.hidden_channels,
                            output_channels = sample.y.shape[1],
                            n_mlp_layers = [3,3,3], 
-                           n_messagePassing_layers = 5,
+                           n_messagePassing_layers = 2,
                            activation = F.elu,
                            halo_swap_mode = self.cfg.halo_swap_mode, 
                            name = 'POLY_%d_RANK_%d_SIZE_%d' %(poly,RANK,SIZE))
@@ -857,10 +857,10 @@ class Trainer:
 
     def train_step_profile(self):
         wait = 5
-        warmup = 5
-        active = 7
+        warmup = 30
+        active = 50
         with profile(
-                activities=[ProfilerActivity.CPU],
+                activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
                 schedule=torch.profiler.schedule(
                     wait=wait,
                     warmup=warmup,
@@ -878,7 +878,7 @@ class Trainer:
                     data.edge_weight = data.edge_weight.cuda()
                     data.edge_attr = data.edge_attr.cuda()
                     data.pos = data.pos.cuda()
-                    data.batch = data.batch.cuda()
+                    data.batch = data.batch.cuda() if data.batch else None
                     data.halo_info = data.halo_info.cuda()
                     data.node_degree = data.node_degree.cuda()
                     loss = loss.cuda()
@@ -1145,9 +1145,11 @@ def train(cfg: DictConfig) -> None:
 
 def train_profile(cfg: DictConfig) -> None:
     
+
+    log.info(f"[RANK {RANK}] --- test")
     start = time.time()
     trainer = Trainer(cfg)
-    epoch_times = []
+    # epoch_times = []
 
     # Run a bunch of train steps 
     t_prof = time.time()
@@ -1175,6 +1177,7 @@ def train_profile(cfg: DictConfig) -> None:
     COMM.Barrier()
 
     torch.save(prof.key_averages(), savepath + '/%s.tar' %(model.get_save_header()))
+
     return 
 
 
