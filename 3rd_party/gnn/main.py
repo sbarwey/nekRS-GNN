@@ -20,6 +20,7 @@ import torch.utils.data.distributed
 from torch.cuda.amp.grad_scaler import GradScaler
 import torch.multiprocessing as mp
 import torch.distributions as tdist 
+from torch.profiler import profile, record_function, ProfilerActivity
 
 import torch.distributed as dist
 import torch.distributed.nn as distnn
@@ -49,8 +50,8 @@ from prettytable import PrettyTable
 
 log = logging.getLogger(__name__)
 
-TORCH_FLOAT_DTYPE = torch.float64
-NP_FLOAT_DTYPE = np.float64
+TORCH_FLOAT_DTYPE = torch.float32
+NP_FLOAT_DTYPE = np.float32
 
 # Get MPI:
 try:
@@ -129,6 +130,15 @@ def metric_average(val: Tensor):
         dist.all_reduce(val, op=dist.ReduceOp.SUM)
         return val / SIZE
     return val
+
+
+def trace_handler(p):
+    output = p.key_averages().table(sort_by="cpu_time_total", row_limit=20)
+    #print(output)
+    print(temp_test)
+    #p.export_chrome_trace("/tmp/trace_" + str(p.step_num) + ".json")
+
+
 
 class Trainer:
     def __init__(self, cfg: DictConfig, scaler: Optional[GradScaler] = None):
@@ -630,7 +640,6 @@ class Trainer:
 
     def train_step(self, data: DataBatch) -> Tensor:
         loss = torch.tensor([0.0])
-        
         if WITH_CUDA:
             data.x = data.x.cuda() 
             data.y = data.y.cuda()
@@ -674,11 +683,11 @@ class Trainer:
             sum_squared_errors_local = squared_errors_local.sum()
             effective_nodes_local = torch.sum(1.0/data.node_degree[:n_nodes_local])
 
-
             effective_nodes = distnn.all_reduce(effective_nodes_local)
             sum_squared_errors = distnn.all_reduce(sum_squared_errors_local)
             loss = (1.0/(effective_nodes*n_output_features)) * sum_squared_errors
 
+        loss = self.loss_fn(out_gnn[:n_nodes_local], target[:n_nodes_local])
         loss.backward()
         self.optimizer.step()
 
@@ -840,14 +849,89 @@ class Trainer:
         #             'input_dict' : ind,
         #             }
 
-
         # savepath = self.cfg.work_dir + '/outputs/postproc/models/tgv_poly_1'
         # #torch.save(save_dict, savepath + '/%s.tar' %(model.get_save_header()))
 
         force_abort()
-         
-
         return loss 
+
+    def train_step_profile(self):
+        wait = 5
+        warmup = 5
+        active = 7
+        with profile(
+                activities=[ProfilerActivity.CPU],
+                schedule=torch.profiler.schedule(
+                    wait=wait,
+                    warmup=warmup,
+                    active=active)
+                #on_trace_ready=trace_handler
+            ) as prof:
+
+            for idx in range(wait+warmup+active): 
+                data = self.data['train']['example']
+                loss = torch.tensor([0.0])
+                if WITH_CUDA:
+                    data.x = data.x.cuda() 
+                    #data.y = data.y.cuda()
+                    data.edge_index = data.edge_index.cuda()
+                    data.edge_weight = data.edge_weight.cuda()
+                    data.edge_attr = data.edge_attr.cuda()
+                    data.pos = data.pos.cuda()
+                    data.batch = data.batch.cuda()
+                    data.halo_info = data.halo_info.cuda()
+                    data.node_degree = data.node_degree.cuda()
+                    loss = loss.cuda()
+                
+                self.optimizer.zero_grad()
+                
+                with record_function(f"[RANK {RANK}] FORWARD PASS"):
+                    out_gnn = self.model(x = data.x,
+                                         edge_index = data.edge_index,
+                                         edge_weight = data.edge_weight,
+                                         pos = data.pos, 
+                                         halo_info = data.halo_info,
+                                         mask_send = self.mask_send,
+                                         mask_recv = self.mask_recv,
+                                         buffer_send = self.buffer_send,
+                                         buffer_recv = self.buffer_recv,
+                                         neighboring_procs = self.neighboring_procs,
+                                         SIZE = SIZE,
+                                         batch = data.batch)
+
+                # target = data.x
+
+                # # Accumulate loss
+                # with record_function(f"[RANK {RANK}] LOSS"):
+                #     n_nodes_local = data.n_nodes_local
+                #     if SIZE == 1:
+                #         loss = self.loss_fn(out_gnn[:n_nodes_local], target[:n_nodes_local])
+                #         effective_nodes = n_nodes_local 
+                #     else:
+                #         n_output_features = out_gnn.shape[1]
+                #         squared_errors_local = torch.pow(out_gnn[:n_nodes_local] - target[:n_nodes_local], 2)
+                #         squared_errors_local = squared_errors_local/data.node_degree[:n_nodes_local].unsqueeze(-1)
+
+                #         sum_squared_errors_local = squared_errors_local.sum()
+                #         effective_nodes_local = torch.sum(1.0/data.node_degree[:n_nodes_local])
+
+                #         effective_nodes = distnn.all_reduce(effective_nodes_local)
+                #         sum_squared_errors = distnn.all_reduce(sum_squared_errors_local)
+                #         loss = (1.0/(effective_nodes*n_output_features)) * sum_squared_errors
+                # 
+                # with record_function(f"[RANK {RANK}] BACKWARD PASS"):
+                #     loss.backward()
+
+                # self.optimizer.step()
+                # self.optimizer.zero_grad()
+
+                # Step the profiler 
+                prof.step()
+
+        return prof
+
+
+
 
     def train_epoch(self, epoch: int) -> dict:
         self.model.train()
@@ -866,8 +950,8 @@ class Trainer:
 
         for bidx, data in enumerate(train_loader):
             batch_size = len(data)
-            loss = self.train_step_verification(data)
-            #loss = self.train_step(data)
+            #loss = self.train_step_verification(data)
+            loss = self.train_step(data)
             running_loss += loss.item()
             count += 1 # accumulate current batch count
             self.training_iter += 1 # accumulate total training iteration
@@ -910,25 +994,6 @@ class Trainer:
         with torch.no_grad():
             for data in test_loader:
                 loss = torch.tensor([0.0])
-                
-                if WITH_CUDA:
-                    data.x = data.x.cuda()
-                    data.edge_index = data.edge_index.cuda()
-                    data.edge_attr = data.edge_attr.cuda()
-                    data.pos = data.pos.cuda()
-                    data.batch = data.batch.cuda()
-                    loss = loss.cuda()
-                
-                # Prediction 
-                out_gnn = self.model(data.x, data.edge_index, data.edge_attr, data.pos, data.batch)
-
-                # Accumulate loss
-                target = data.y
-                if WITH_CUDA:
-                    target = target.cuda()
-
-                # Standard loss 
-                loss = self.loss_fn(out_gnn, target)
                 
                 running_loss += loss.item()
                 count += 1
@@ -976,105 +1041,142 @@ class Trainer:
         return 
 
 
-
 def train(cfg: DictConfig) -> None:
     start = time.time()
     trainer = Trainer(cfg)
     trainer.writeGraphStatistics()
     epoch_times = []
 
-    # for epoch in range(trainer.epoch_start, cfg.epochs+1):
-    #     # ~~~~ Training step 
-    #     t0 = time.time()
-    #     trainer.epoch = epoch
-    #     train_metrics = trainer.train_epoch(epoch)
-    #     trainer.loss_hist_train[epoch-1] = train_metrics["loss"]
+    for epoch in range(trainer.epoch_start, cfg.epochs+1):
+        # ~~~~ Training step 
+        t0 = time.time()
+        trainer.epoch = epoch
+        train_metrics = trainer.train_epoch(epoch)
+        trainer.loss_hist_train[epoch-1] = train_metrics["loss"]
 
-    #     epoch_time = time.time() - t0
-    #     epoch_times.append(epoch_time)
+        epoch_time = time.time() - t0
+        epoch_times.append(epoch_time)
 
-    #     # ~~~~ Validation step
-    #     test_metrics = trainer.test()
-    #     trainer.loss_hist_test[epoch-1] = test_metrics["loss"]
-    #     
-    #     # ~~~~ Printing
-    #     if RANK == 0:
-    #         astr = f'[TEST] loss={test_metrics["loss"]:.4e}'
-    #         sepstr = '-' * len(astr)
-    #         log.info(sepstr)
-    #         log.info(astr)
-    #         log.info(sepstr)
-    #         summary = '  '.join([
-    #             '[TRAIN]',
-    #             f'loss={train_metrics["loss"]:.4e}',
-    #             f'epoch_time={epoch_time:.4g} sec'
-    #         ])
-    #         log.info((sep := '-' * len(summary)))
-    #         log.info(summary)
-    #         log.info(sep)
+        # ~~~~ Validation step
+        test_metrics = trainer.test()
+        trainer.loss_hist_test[epoch-1] = test_metrics["loss"]
+        
+        # ~~~~ Printing
+        if RANK == 0:
+            astr = f'[TEST] loss={test_metrics["loss"]:.4e}'
+            sepstr = '-' * len(astr)
+            log.info(sepstr)
+            log.info(astr)
+            log.info(sepstr)
+            summary = '  '.join([
+                '[TRAIN]',
+                f'loss={train_metrics["loss"]:.4e}',
+                f'epoch_time={epoch_time:.4g} sec'
+            ])
+            log.info((sep := '-' * len(summary)))
+            log.info(summary)
+            log.info(sep)
 
-    #     # ~~~~ Step scheduler based on validation loss
-    #     trainer.scheduler.step(test_metrics["loss"])
+        # ~~~~ Step scheduler based on validation loss
+        trainer.scheduler.step(test_metrics["loss"])
 
-    #     # ~~~~ Checkpointing step 
-    #     if epoch % cfg.ckptfreq == 0 and RANK == 0:
-    #         astr = 'Checkpointing on root processor, epoch = %d' %(epoch)
-    #         sepstr = '-' * len(astr)
-    #         log.info(sepstr)
-    #         log.info(astr)
-    #         log.info(sepstr)
+        # ~~~~ Checkpointing step 
+        if epoch % cfg.ckptfreq == 0 and RANK == 0:
+            astr = 'Checkpointing on root processor, epoch = %d' %(epoch)
+            sepstr = '-' * len(astr)
+            log.info(sepstr)
+            log.info(astr)
+            log.info(sepstr)
 
-    #         if not os.path.exists(cfg.ckpt_dir):
-    #             os.makedirs(cfg.ckpt_dir)
+            if not os.path.exists(cfg.ckpt_dir):
+                os.makedirs(cfg.ckpt_dir)
 
-    #         if WITH_DDP and SIZE > 1:
-    #             sd = trainer.model.module.state_dict()
-    #         else:
-    #             sd = trainer.model.state_dict()
+            if WITH_DDP and SIZE > 1:
+                sd = trainer.model.module.state_dict()
+            else:
+                sd = trainer.model.state_dict()
 
-    #         ckpt = {'epoch' : epoch,
-    #                 'training_iter' : trainer.training_iter,
-    #                 'model_state_dict' : sd,
-    #                 'optimizer_state_dict' : trainer.optimizer.state_dict(),
-    #                 'scheduler_state_dict' : trainer.scheduler.state_dict(),
-    #                 'loss_hist_train' : trainer.loss_hist_train,
-    #                 'loss_hist_test' : trainer.loss_hist_test}
-    #         
-    #         torch.save(ckpt, trainer.ckpt_path)
-    #     dist.barrier()
+            ckpt = {'epoch' : epoch,
+                    'training_iter' : trainer.training_iter,
+                    'model_state_dict' : sd,
+                    'optimizer_state_dict' : trainer.optimizer.state_dict(),
+                    'scheduler_state_dict' : trainer.scheduler.state_dict(),
+                    'loss_hist_train' : trainer.loss_hist_train,
+                    'loss_hist_test' : trainer.loss_hist_test}
+            
+            torch.save(ckpt, trainer.ckpt_path)
+        dist.barrier()
 
-    # rstr = f'[{RANK}] ::'
-    # log.info(' '.join([
-    #     rstr,
-    #     f'Total training time: {time.time() - start} seconds'
-    # ]))
-    # 
-    # if RANK == 0:
-    #     if WITH_CUDA:
-    #         trainer.model.to('cpu')
-    #     if not os.path.exists(cfg.model_dir):
-    #         os.makedirs(cfg.model_dir)
+    rstr = f'[{RANK}] ::'
+    log.info(' '.join([
+        rstr,
+        f'Total training time: {time.time() - start} seconds'
+    ]))
+    
+    if RANK == 0:
+        if WITH_CUDA:
+            trainer.model.to('cpu')
+        if not os.path.exists(cfg.model_dir):
+            os.makedirs(cfg.model_dir)
 
-    #     if WITH_DDP and SIZE > 1:
-    #         sd = trainer.model.module.state_dict()
-    #         ind = trainer.model.module.input_dict()
-    #     else:
-    #         sd = trainer.model.state_dict()
-    #         ind = trainer.model.input_dict()
+        if WITH_DDP and SIZE > 1:
+            sd = trainer.model.module.state_dict()
+            ind = trainer.model.module.input_dict()
+        else:
+            sd = trainer.model.state_dict()
+            ind = trainer.model.input_dict()
 
-    #     save_dict = {
-    #                 'state_dict' : sd,
-    #                 'input_dict' : ind,
-    #                 'loss_hist_train' : trainer.loss_hist_train,
-    #                 'loss_hist_test' : trainer.loss_hist_test,
-    #                 'training_iter' : trainer.training_iter
-    #                 }
-    #     
-    #     torch.save(save_dict, trainer.model_path)
+        save_dict = {
+                    'state_dict' : sd,
+                    'input_dict' : ind,
+                    'loss_hist_train' : trainer.loss_hist_train,
+                    'loss_hist_test' : trainer.loss_hist_test,
+                    'training_iter' : trainer.training_iter
+                    }
+        
+        torch.save(save_dict, trainer.model_path)
 
-    # # Plot connectivity
-    # if (cfg.plot_connectivity):
-    #     gplot.plot_graph(trainer.data['train']['example'], RANK, cfg.work_dir)
+    # Plot connectivity
+    if (cfg.plot_connectivity):
+        gplot.plot_graph(trainer.data['train']['example'], RANK, cfg.work_dir)
+
+    return 
+
+
+def train_profile(cfg: DictConfig) -> None:
+    
+    start = time.time()
+    trainer = Trainer(cfg)
+    epoch_times = []
+
+    # Run a bunch of train steps 
+    t_prof = time.time()
+    prof = trainer.train_step_profile()
+    t_prof = time.time() - t_prof
+    log.info(f"[RANK {RANK}] -- t_prof = {t_prof} s")
+
+    if RANK == 0:
+        print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=10))
+
+    # save profiler data 
+    if SIZE == 1:
+        model = trainer.model
+    else:
+        model = trainer.model.module
+
+    # if path doesnt exist, make it 
+    savepath = cfg.work_dir + "/outputs/profiles/" 
+    if RANK == 0:
+        if not os.path.exists(savepath):
+            os.makedirs(savepath)
+            print("Directory created by root processor.")
+        else:
+            print("Directory already exists.")
+    COMM.Barrier()
+
+    torch.save(prof.key_averages(), savepath + '/%s.tar' %(model.get_save_header()))
+    return 
+
 
 def halo_test(cfg: DictConfig) -> None:
     trainer = Trainer(cfg)
@@ -1132,7 +1234,11 @@ def halo_test(cfg: DictConfig) -> None:
 def main(cfg: DictConfig) -> None:
     print('Rank %d, local rank %d, which has device %s. Sees %d devices.' %(RANK,int(LOCAL_RANK),DEVICE,torch.cuda.device_count()))
 
-    train(cfg)
+    if cfg.profile: 
+        train_profile(cfg)
+    else: 
+        train(cfg)
+
     #halo_test(cfg)
     
     cleanup()
