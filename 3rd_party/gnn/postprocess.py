@@ -195,7 +195,7 @@ if __name__ == "__main__":
         # plt.show(block=False)
 
 
-    if 1 == 1:
+    if 1 == 0:
         """
         Looking at graph stats -- number of nodes, edges, etc. 
         """
@@ -286,6 +286,86 @@ if __name__ == "__main__":
         ax.set_ylabel('Graph Edges')
         ax.set_xlabel('Ranks')
         plt.show(block=False)
+
+
+
+    if 1 == 1:
+        """
+        Looking at profiler outputs 
+        """
+        
+        poly = 1 # nekrs polynomial order  
+        n_mp = 2 # number of message passing layers 
+        n_hc = 32 # number of hidden channels 
+
+        SIZE_LIST = [1,2,4]
+        HALO_MODE_LIST = ['none', 'all_to_all']
+
+        # load data 
+        t_forwardPass = {}
+        for i in range(len(HALO_MODE_LIST)):
+            halo = HALO_MODE_LIST[i]
+            t_forwardPass[halo] = []
+            for j in range(len(SIZE_LIST)):
+                size = SIZE_LIST[j]
+                t_forwardPass[halo].append(np.zeros(size))
+                for k in range(size):
+                    rank = k 
+                    file_str = f"POLY_{poly}_RANK_{rank}_SIZE_{size}_input_channels_3_hidden_channels_{n_hc}_output_channels_3_nMessagePassingLayers_{n_mp}_halo_{halo}.tar"
+                    
+                    # load profile data 
+                    temp_prof = torch.load("./outputs/profiles/" + file_str)
+                    # print(temp_prof.table(sort_by="cpu_time_total", row_limit=10))
+                    key_list = [] 
+                    for key_id in range(len(temp_prof)):
+                        key_list.append(temp_prof[key_id].key)
+                    idx_key = key_list.index(f'[RANK {rank}] FORWARD PASS') 
+                    cuda_time = temp_prof[idx_key].cuda_time # in microseconds, averaged over many runs  
+
+                    t_forwardPass[halo][j][k] = cuda_time
+                    print(f"[SIZE {size}, RANK {rank}] -- cuda_time = {cuda_time} us")
+
+
+        # plot data 
+        fig, ax = plt.subplots()
+        lw = 2 
+        
+        halo = 'none'
+        x_axis = np.array(SIZE_LIST)
+        y_axis_mean = np.zeros_like(x_axis)
+        y_axis_max = np.zeros_like(x_axis)
+        y_axis_min = np.zeros_like(x_axis)
+        for j in range(len(SIZE_LIST)):
+            y_axis_mean[j] = t_forwardPass[halo][j].mean()
+            y_axis_max[j] = t_forwardPass[halo][j].max()
+            y_axis_min[j] = t_forwardPass[halo][j].min()
+
+        ax.plot(x_axis, y_axis_mean, color='black', lw=lw)
+        ax.plot(x_axis, y_axis_max, color='black', ls='--', lw=1)
+        ax.plot(x_axis, y_axis_min, color='black', ls='--', lw=1)
+
+        halo = 'all_to_all'
+        x_axis = np.array(SIZE_LIST)
+        y_axis_mean = np.zeros_like(x_axis)
+        y_axis_max = np.zeros_like(x_axis)
+        y_axis_min = np.zeros_like(x_axis)
+        for j in range(len(SIZE_LIST)):
+            y_axis_mean[j] = t_forwardPass[halo][j].mean()
+            y_axis_max[j] = t_forwardPass[halo][j].max()
+            y_axis_min[j] = t_forwardPass[halo][j].min()
+
+        ax.plot(x_axis, y_axis_mean, color='blue', lw=2)
+        ax.plot(x_axis, y_axis_max, color='blue', ls='--', lw=1)
+        ax.plot(x_axis, y_axis_min, color='blue', ls='--', lw=1)
+
+        ax.set_ylabel('Time [us]')
+        ax.set_xlabel('Number of GPUs')
+        ax.set_title('DistGNN Forward Pass')
+        plt.show(block=False)
+
+        
+
+
 
 
 
