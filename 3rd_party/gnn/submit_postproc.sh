@@ -1,11 +1,12 @@
 #!/bin/sh
-#PBS -l select=8:system=polaris
+#PBS -l select=32:system=polaris
 #PBS -l place=scatter
-#PBS -l walltime=00:10:00
+#PBS -l walltime=00:30:00
 #PBS -l filesystems=home:eagle
 ##PBS -q preemptable
-#PBS -q debug-scaling
+##PBS -q debug-scaling
 ##PBS -q debug
+#PBS -q prod
 #PBS -A datascience
 #PBS -N distr_gnn
 
@@ -48,6 +49,8 @@ mpiexec -n 4 -ppn 4 -d 8 --cpu-bind depth ./set_affinity_gpu_polaris.sh python3 
 mpiexec -n 8 -ppn 4 -d 8 --cpu-bind depth ./set_affinity_gpu_polaris.sh python3 main.py halo_swap_mode=all_to_all 
 mpiexec -n 16 -ppn 4 -d 8 --cpu-bind depth ./set_affinity_gpu_polaris.sh python3 main.py halo_swap_mode=all_to_all
 mpiexec -n 32 -ppn 4 -d 8 --cpu-bind depth ./set_affinity_gpu_polaris.sh python3 main.py halo_swap_mode=all_to_all
+mpiexec -n 64 -ppn 4 -d 8 --cpu-bind depth ./set_affinity_gpu_polaris.sh python3 main.py halo_swap_mode=all_to_all
+mpiexec -n 128 -ppn 4 -d 8 --cpu-bind depth ./set_affinity_gpu_polaris.sh python3 main.py halo_swap_mode=all_to_all
 
 mpiexec -n 1 -ppn 4 -d 8 --cpu-bind depth ./set_affinity_gpu_polaris.sh python3 main.py halo_swap_mode=none 
 mpiexec -n 2 -ppn 4 -d 8 --cpu-bind depth ./set_affinity_gpu_polaris.sh python3 main.py halo_swap_mode=none
@@ -55,3 +58,5 @@ mpiexec -n 4 -ppn 4 -d 8 --cpu-bind depth ./set_affinity_gpu_polaris.sh python3 
 mpiexec -n 8 -ppn 4 -d 8 --cpu-bind depth ./set_affinity_gpu_polaris.sh python3 main.py halo_swap_mode=none
 mpiexec -n 16 -ppn 4 -d 8 --cpu-bind depth ./set_affinity_gpu_polaris.sh python3 main.py halo_swap_mode=none
 mpiexec -n 32 -ppn 4 -d 8 --cpu-bind depth ./set_affinity_gpu_polaris.sh python3 main.py halo_swap_mode=none
+mpiexec -n 64 -ppn 4 -d 8 --cpu-bind depth ./set_affinity_gpu_polaris.sh python3 main.py halo_swap_mode=none
+mpiexec -n 128 -ppn 4 -d 8 --cpu-bind depth ./set_affinity_gpu_polaris.sh python3 main.py halo_swap_mode=none
