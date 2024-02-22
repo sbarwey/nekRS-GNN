@@ -155,6 +155,9 @@ class Trainer:
         # ~~~~ Init torch stuff 
         self.setup_torch()
 
+        # ~~~~ Set hidden channel dimensionality
+        self.hidden_channels = 32
+
         # ~~~~ Setup local graph 
         self.data_reduced, self.data_full, self.idx_full2reduced, self.idx_reduced2full = self.setup_local_graph()
 
@@ -171,9 +174,6 @@ class Trainer:
         if RANK == 0: log.info('Done with build_masks')
 
         # ~~~~ Initialize send/recv buffers on device (if applicable)
-        self.hidden_channels = 32
-        #self.hidden_channels = 3
-        #self.hidden_channels = 1
         self.buffer_send, self.buffer_recv, self.n_buffer_rows = self.build_buffers(self.hidden_channels)
         if RANK == 0: log.info('Done with build_buffers')
 
@@ -898,7 +898,12 @@ class Trainer:
                 self.optimizer.zero_grad()
 
                 # re-allocate send buffer 
-                buffer_send = self.init_send_buffer(self.n_buffer_rows, self.hidden_channels, DEVICE_ID)
+                if self.cfg.halo_swap_mode == 'all_to_all':
+                    buffer_send = self.init_send_buffer(self.n_buffer_rows, self.hidden_channels, DEVICE_ID)
+                    buffer_recv = self.buffer_recv
+                else:
+                    buffer_send = None
+                    buffer_recv = None
 
                 with record_function(f"[RANK {RANK}] FORWARD PASS"):
                     out_gnn = self.model(x = data.x,
@@ -909,7 +914,7 @@ class Trainer:
                                          mask_send = self.mask_send,
                                          mask_recv = self.mask_recv,
                                          buffer_send = buffer_send,
-                                         buffer_recv = self.buffer_recv,
+                                         buffer_recv = buffer_recv,
                                          neighboring_procs = self.neighboring_procs,
                                          SIZE = SIZE,
                                          batch = data.batch)
