@@ -174,7 +174,7 @@ class Trainer:
         self.hidden_channels = 32
         #self.hidden_channels = 3
         #self.hidden_channels = 1
-        self.buffer_send, self.buffer_recv = self.build_buffers(self.hidden_channels)
+        self.buffer_send, self.buffer_recv, self.n_buffer_rows = self.build_buffers(self.hidden_channels)
         if RANK == 0: log.info('Done with build_buffers')
 
         # ~~~~ Build model and move to gpu 
@@ -379,7 +379,14 @@ class Trainer:
             #    buff_send[i] = torch.empty([len(self.mask_send[i]), n_features], dtype=torch.float32, device=DEVICE_ID) 
             #    buff_recv[i] = torch.empty([len(self.mask_recv[i]), n_features], dtype=torch.float32, device=DEVICE_ID)
 
-        return buff_send, buff_recv 
+        return buff_send, buff_recv, n_max 
+
+    def init_send_buffer(self, n_buffer_rows, n_features, device):
+        buff_send = [torch.tensor([])] * SIZE
+        if SIZE > 1: 
+            for i in range(SIZE): 
+                buff_send[i] = torch.empty([n_buffer_rows, n_features], dtype=TORCH_FLOAT_DTYPE, device=device) 
+        return buff_send 
 
     def gather_node_tensor(self, input_tensor, dst=0, dtype=torch.float32):
         """
@@ -890,8 +897,8 @@ class Trainer:
 
                 self.optimizer.zero_grad()
 
-                # re-allocate buffer 
-                buffer_send, _ = self.build_buffers(self.hidden_channels)
+                # re-allocate send buffer 
+                buffer_send = self.init_send_buffer(self.n_buffer_rows, self.hidden_channels, DEVICE_ID)
 
                 with record_function(f"[RANK {RANK}] FORWARD PASS"):
                     out_gnn = self.model(x = data.x,
@@ -1186,59 +1193,6 @@ def train_profile(cfg: DictConfig) -> None:
     # ~~~~ # torch.save(prof.key_averages(), savepath + '/%s.tar' %(model.get_save_header()))
 
     return 
-
-
-def halo_test(cfg: DictConfig) -> None:
-    trainer = Trainer(cfg)
-
-    # Get the sample 
-    sample = trainer.data['train']['example']
-
-    # print('[RANK = %d] x\n' %(RANK), sample.x)
-    # print('[RANK = %d] y\n' %(RANK), sample.y)
-    # print('[RANK = %d] halo_info' %(RANK), sample.halo_info)
-    # print('[RANK = %d] local_unique_mask' %(RANK), sample.local_unique_mask)
-    # print('[RANK = %d] halo_unique_mask' %(RANK), sample.halo_unique_mask)
-
-    n_nodes_local = sample.n_nodes_local
-    #trainer.print_node_attribute(sample.x[:n_nodes_local,:], 'x')
-
-
-    # Test the halo swap 
-    # get masks  
-    mask_send, mask_recv = trainer.build_masks()
-
-    # build buffers 
-    n_features_x = sample.x.shape[1]
-    buffer_send, buffer_recv = trainer.build_buffers(n_features_x)
-    
-    # fill the buffers 
-    input_tensor = sample.x 
-    for i in trainer.neighboring_procs:
-        n_send = len(mask_send[i])
-        buffer_send[i][:n_send,:] = input_tensor[mask_send[i]]
-        print('[RANK = %d] \t i = %d \t n_send = %d \t buffer_send[i].shape: ' %(RANK,i,n_send), buffer_send[i].shape)
-
-    # # do the swap 
-    # #trainer.print_node_attribute(sample.x, 'x before')
-    # print('[RANK = %d] x before swap: ' %(RANK), sample.x)
-    # sample.x = trainer.halo_swap(sample.x, buffer_send, buffer_recv)
-    # print('[RANK = %d] x after swap: ' %(RANK), sample.x)
-
-    # ~~~~ ALL to ALL based swap
-    # First step: fill the buffers 
-    if SIZE > 1:
-
-        # Perform all to all
-        distnn.all_to_all(buffer_recv, buffer_send)
-
-        # Fill halo nodes 
-        for i in trainer.neighboring_procs:
-            n_recv = len(mask_recv[i])
-            sample.x[mask_recv[i]] = buffer_recv[i][:n_recv,:]
-
-    #trainer.print_node_attribute(sample.x[:n_nodes_local,:], 'x')
-
 
 @hydra.main(version_base=None, config_path='./conf', config_name='config')
 def main(cfg: DictConfig) -> None:
