@@ -357,6 +357,7 @@ class Trainer:
     def build_buffers(self, n_features):
         buff_send = [torch.tensor([])] * SIZE
         buff_recv = [torch.tensor([])] * SIZE
+        n_max = 0
         
         if SIZE > 1: 
 
@@ -865,8 +866,8 @@ class Trainer:
     def train_step_profile(self):
         self.model.train()
         wait = 5
-        warmup = 1000
-        active = 50
+        warmup = 50
+        active = 200
 
         # with torch.no_grad(): 
         with profile(
@@ -880,7 +881,7 @@ class Trainer:
 
             data = self.data['train']['example']
             for idx in range(wait+warmup+active): 
-                log.info(f"\t[RANK {RANK}] -- step {idx}")
+                # log.info(f"\t[RANK {RANK}] -- step {idx}")
 
                 loss = torch.tensor([0.0])
                 if WITH_CUDA:
@@ -919,30 +920,30 @@ class Trainer:
                                          SIZE = SIZE,
                                          batch = data.batch)
 
-                target = data.x
+                # target = data.x
 
-                # Accumulate loss
-                with record_function(f"[RANK {RANK}] LOSS"):
-                    n_nodes_local = data.n_nodes_local
-                    if SIZE == 1:
-                        loss = self.loss_fn(out_gnn[:n_nodes_local], target[:n_nodes_local])
-                        effective_nodes = n_nodes_local 
-                    else:
-                        n_output_features = out_gnn.shape[1]
-                        squared_errors_local = torch.pow(out_gnn[:n_nodes_local] - target[:n_nodes_local], 2)
-                        squared_errors_local = squared_errors_local/data.node_degree[:n_nodes_local].unsqueeze(-1)
+                # # Accumulate loss
+                # with record_function(f"[RANK {RANK}] LOSS"):
+                #     n_nodes_local = data.n_nodes_local
+                #     if SIZE == 1:
+                #         loss = self.loss_fn(out_gnn[:n_nodes_local], target[:n_nodes_local])
+                #         effective_nodes = n_nodes_local 
+                #     else:
+                #         n_output_features = out_gnn.shape[1]
+                #         squared_errors_local = torch.pow(out_gnn[:n_nodes_local] - target[:n_nodes_local], 2)
+                #         squared_errors_local = squared_errors_local/data.node_degree[:n_nodes_local].unsqueeze(-1)
 
-                        sum_squared_errors_local = squared_errors_local.sum()
-                        effective_nodes_local = torch.sum(1.0/data.node_degree[:n_nodes_local])
+                #         sum_squared_errors_local = squared_errors_local.sum()
+                #         effective_nodes_local = torch.sum(1.0/data.node_degree[:n_nodes_local])
 
-                        effective_nodes = distnn.all_reduce(effective_nodes_local)
-                        sum_squared_errors = distnn.all_reduce(sum_squared_errors_local)
-                        loss = (1.0/(effective_nodes*n_output_features)) * sum_squared_errors
-                
-                with record_function(f"[RANK {RANK}] BACKWARD PASS"):
-                    loss.backward()
+                #         effective_nodes = distnn.all_reduce(effective_nodes_local)
+                #         sum_squared_errors = distnn.all_reduce(sum_squared_errors_local)
+                #         loss = (1.0/(effective_nodes*n_output_features)) * sum_squared_errors
+                # 
+                # with record_function(f"[RANK {RANK}] BACKWARD PASS"):
+                #     loss.backward()
 
-                self.optimizer.step()
+                # self.optimizer.step()
 
                 # Step the profiler 
                 prof.step()
@@ -1163,8 +1164,6 @@ def train(cfg: DictConfig) -> None:
 
 
 def train_profile(cfg: DictConfig) -> None:
-    
-
     log.info(f"[RANK {RANK}] --- test")
     start = time.time()
     trainer = Trainer(cfg)
@@ -1179,23 +1178,23 @@ def train_profile(cfg: DictConfig) -> None:
     if RANK == 0:
         print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=10))
 
-    # ~~~~ # # save profiler data 
-    # ~~~~ # if SIZE == 1:
-    # ~~~~ #     model = trainer.model
-    # ~~~~ # else:
-    # ~~~~ #     model = trainer.model.module
+    # save profiler data 
+    if SIZE == 1:
+        model = trainer.model
+    else:
+        model = trainer.model.module
 
-    # ~~~~ # # if path doesnt exist, make it 
-    # ~~~~ # savepath = cfg.work_dir + "/outputs/profiles/" 
-    # ~~~~ # if RANK == 0:
-    # ~~~~ #     if not os.path.exists(savepath):
-    # ~~~~ #         os.makedirs(savepath)
-    # ~~~~ #         print("Directory created by root processor.")
-    # ~~~~ #     else:
-    # ~~~~ #         print("Directory already exists.")
-    # ~~~~ # COMM.Barrier()
+    # if path doesnt exist, make it 
+    savepath = cfg.work_dir + "/outputs/profiles/" 
+    if RANK == 0:
+        if not os.path.exists(savepath):
+            os.makedirs(savepath)
+            print("Directory created by root processor.")
+        else:
+            print("Directory already exists.")
+    COMM.Barrier()
 
-    # ~~~~ # torch.save(prof.key_averages(), savepath + '/%s.tar' %(model.get_save_header()))
+    torch.save(prof.key_averages(), savepath + '/%s.tar' %(model.get_save_header()))
 
     return 
 
