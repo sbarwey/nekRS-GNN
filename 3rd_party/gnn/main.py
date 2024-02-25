@@ -155,8 +155,6 @@ class Trainer:
         # ~~~~ Init torch stuff 
         self.setup_torch()
 
-        # ~~~~ Set hidden channel dimensionality
-        self.hidden_channels = 32
 
         # ~~~~ Setup local graph 
         self.data_reduced, self.data_full, self.idx_full2reduced, self.idx_reduced2full = self.setup_local_graph()
@@ -174,7 +172,7 @@ class Trainer:
         if RANK == 0: log.info('Done with build_masks')
 
         # ~~~~ Initialize send/recv buffers on device (if applicable)
-        self.buffer_send, self.buffer_recv, self.n_buffer_rows = self.build_buffers(self.hidden_channels)
+        self.buffer_send, self.buffer_recv, self.n_buffer_rows = self.build_buffers(self.cfg.hidden_channels)
         if RANK == 0: log.info('Done with build_buffers')
 
         # ~~~~ Build model and move to gpu 
@@ -265,15 +263,24 @@ class Trainer:
             poly = 0
 
         # Full model 
-        model = gnn.mp_gnn_distributed(input_channels = sample.x.shape[1], 
-                           hidden_channels = self.hidden_channels,
-                           output_channels = sample.y.shape[1],
-                           n_mlp_layers = [3,3,3], 
-                           n_messagePassing_layers = 2,
-                           activation = F.elu,
-                           halo_swap_mode = self.cfg.halo_swap_mode, 
-                           name = 'POLY_%d_RANK_%d_SIZE_%d' %(poly,RANK,SIZE))
-        
+        input_node_channels = sample.x.shape[1]
+        input_edge_channels = sample.pos.shape[1] + sample.x.shape[1] + 1 
+        hidden_channels = self.cfg.hidden_channels
+        output_node_channels = sample.y.shape[1]
+        n_mlp_hidden_layers = self.cfg.n_mlp_hidden_layers
+        n_messagePassing_layers = self.cfg.n_messagePassing_layers
+        halo_swap_mode = self.cfg.halo_swap_mode
+        name = 'POLY_%d_RANK_%d_SIZE_%d' %(poly,RANK,SIZE) 
+
+        model = gnn.DistributedGNN(input_node_channels,
+                           input_edge_channels,
+                           hidden_channels,
+                           output_node_channels,
+                           n_mlp_hidden_layers,
+                           n_messagePassing_layers,
+                           halo_swap_mode,
+                           name)
+
         return model
 
     def build_optimizer(self, model: nn.Module) -> torch.optim.Optimizer:
@@ -718,20 +725,6 @@ class Trainer:
         
         self.optimizer.zero_grad()
         
-        # # Toy GNN 
-        # out_gnn = self.model(x = data.x,
-        #                      edge_index = data.edge_index,
-        #                      edge_weight = data.edge_weight,
-        #                      halo_info = data.halo_info,
-        #                      mask_send = self.mask_send,
-        #                      mask_recv = self.mask_recv,
-        #                      buffer_send = self.buffer_send,
-        #                      buffer_recv = self.buffer_recv,
-        #                      neighboring_procs = self.neighboring_procs,
-        #                      SIZE = SIZE,
-        #                      batch = data.batch)
-
-        # Full GNN 
         out_gnn = self.model(x = data.x,
                              edge_index = data.edge_index,
                              edge_weight = data.edge_weight,
@@ -826,8 +819,7 @@ class Trainer:
         else:
             path_desc = 'float32'
         
-        #savepath = self.cfg.work_dir + '/outputs/postproc/real_gnn_test_3/periodic_after_fix_edges_2/gradient_data_gpu_nondeterministic_POLARIS/tgv_poly_5/%s' %(path_desc)
-        savepath = self.cfg.work_dir + '/outputs/postproc/real_gnn_test_3/periodic_after_fix_edges_2/gradient_data_gpu_nondeterministic_POLARIS/tgv_poly_5/%s' %(path_desc)
+        savepath = self.cfg.work_dir + '/outputs/postproc/real_gnn_test_4/periodic_after_fix_edges_2/gradient_data_gpu_nondeterministic_POLARIS/tgv_poly_1/%s' %(path_desc)
 
         # if path doesnt exist, make it 
         if RANK == 0:
@@ -900,7 +892,7 @@ class Trainer:
 
                 # re-allocate send buffer 
                 if self.cfg.halo_swap_mode == 'all_to_all':
-                    buffer_send = self.init_send_buffer(self.n_buffer_rows, self.hidden_channels, DEVICE_ID)
+                    buffer_send = self.init_send_buffer(self.n_buffer_rows, self.cfg.hidden_channels, DEVICE_ID)
                     buffer_recv = self.buffer_recv
                 else:
                     buffer_send = None
@@ -970,8 +962,8 @@ class Trainer:
 
         for bidx, data in enumerate(train_loader):
             batch_size = len(data)
-            #loss = self.train_step_verification(data)
-            loss = self.train_step(data)
+            loss = self.train_step_verification(data)
+            #loss = self.train_step(data)
             running_loss += loss.item()
             count += 1 # accumulate current batch count
             self.training_iter += 1 # accumulate total training iteration
@@ -1067,98 +1059,98 @@ def train(cfg: DictConfig) -> None:
     trainer.writeGraphStatistics()
     epoch_times = []
 
-    # for epoch in range(trainer.epoch_start, cfg.epochs+1):
-    #     # ~~~~ Training step 
-    #     t0 = time.time()
-    #     trainer.epoch = epoch
-    #     train_metrics = trainer.train_epoch(epoch)
-    #     trainer.loss_hist_train[epoch-1] = train_metrics["loss"]
+    for epoch in range(trainer.epoch_start, cfg.epochs+1):
+        # ~~~~ Training step 
+        t0 = time.time()
+        trainer.epoch = epoch
+        train_metrics = trainer.train_epoch(epoch)
+        trainer.loss_hist_train[epoch-1] = train_metrics["loss"]
 
-    #     epoch_time = time.time() - t0
-    #     epoch_times.append(epoch_time)
+        epoch_time = time.time() - t0
+        epoch_times.append(epoch_time)
 
-    #     # ~~~~ Validation step
-    #     test_metrics = trainer.test()
-    #     trainer.loss_hist_test[epoch-1] = test_metrics["loss"]
-    #     
-    #     # ~~~~ Printing
-    #     if RANK == 0:
-    #         astr = f'[TEST] loss={test_metrics["loss"]:.4e}'
-    #         sepstr = '-' * len(astr)
-    #         log.info(sepstr)
-    #         log.info(astr)
-    #         log.info(sepstr)
-    #         summary = '  '.join([
-    #             '[TRAIN]',
-    #             f'loss={train_metrics["loss"]:.4e}',
-    #             f'epoch_time={epoch_time:.4g} sec'
-    #         ])
-    #         log.info((sep := '-' * len(summary)))
-    #         log.info(summary)
-    #         log.info(sep)
+        # ~~~~ Validation step
+        test_metrics = trainer.test()
+        trainer.loss_hist_test[epoch-1] = test_metrics["loss"]
+        
+        # ~~~~ Printing
+        if RANK == 0:
+            astr = f'[TEST] loss={test_metrics["loss"]:.4e}'
+            sepstr = '-' * len(astr)
+            log.info(sepstr)
+            log.info(astr)
+            log.info(sepstr)
+            summary = '  '.join([
+                '[TRAIN]',
+                f'loss={train_metrics["loss"]:.4e}',
+                f'epoch_time={epoch_time:.4g} sec'
+            ])
+            log.info((sep := '-' * len(summary)))
+            log.info(summary)
+            log.info(sep)
 
-    #     # ~~~~ Step scheduler based on validation loss
-    #     trainer.scheduler.step(test_metrics["loss"])
+        # ~~~~ Step scheduler based on validation loss
+        trainer.scheduler.step(test_metrics["loss"])
 
-    #     # ~~~~ Checkpointing step 
-    #     if epoch % cfg.ckptfreq == 0 and RANK == 0:
-    #         astr = 'Checkpointing on root processor, epoch = %d' %(epoch)
-    #         sepstr = '-' * len(astr)
-    #         log.info(sepstr)
-    #         log.info(astr)
-    #         log.info(sepstr)
+        # ~~~~ Checkpointing step 
+        if epoch % cfg.ckptfreq == 0 and RANK == 0:
+            astr = 'Checkpointing on root processor, epoch = %d' %(epoch)
+            sepstr = '-' * len(astr)
+            log.info(sepstr)
+            log.info(astr)
+            log.info(sepstr)
 
-    #         if not os.path.exists(cfg.ckpt_dir):
-    #             os.makedirs(cfg.ckpt_dir)
+            if not os.path.exists(cfg.ckpt_dir):
+                os.makedirs(cfg.ckpt_dir)
 
-    #         if WITH_DDP and SIZE > 1:
-    #             sd = trainer.model.module.state_dict()
-    #         else:
-    #             sd = trainer.model.state_dict()
+            if WITH_DDP and SIZE > 1:
+                sd = trainer.model.module.state_dict()
+            else:
+                sd = trainer.model.state_dict()
 
-    #         ckpt = {'epoch' : epoch,
-    #                 'training_iter' : trainer.training_iter,
-    #                 'model_state_dict' : sd,
-    #                 'optimizer_state_dict' : trainer.optimizer.state_dict(),
-    #                 'scheduler_state_dict' : trainer.scheduler.state_dict(),
-    #                 'loss_hist_train' : trainer.loss_hist_train,
-    #                 'loss_hist_test' : trainer.loss_hist_test}
-    #         
-    #         torch.save(ckpt, trainer.ckpt_path)
-    #     dist.barrier()
+            ckpt = {'epoch' : epoch,
+                    'training_iter' : trainer.training_iter,
+                    'model_state_dict' : sd,
+                    'optimizer_state_dict' : trainer.optimizer.state_dict(),
+                    'scheduler_state_dict' : trainer.scheduler.state_dict(),
+                    'loss_hist_train' : trainer.loss_hist_train,
+                    'loss_hist_test' : trainer.loss_hist_test}
+            
+            torch.save(ckpt, trainer.ckpt_path)
+        dist.barrier()
 
-    # rstr = f'[{RANK}] ::'
-    # log.info(' '.join([
-    #     rstr,
-    #     f'Total training time: {time.time() - start} seconds'
-    # ]))
-    # 
-    # if RANK == 0:
-    #     if WITH_CUDA:
-    #         trainer.model.to('cpu')
-    #     if not os.path.exists(cfg.model_dir):
-    #         os.makedirs(cfg.model_dir)
+    rstr = f'[{RANK}] ::'
+    log.info(' '.join([
+        rstr,
+        f'Total training time: {time.time() - start} seconds'
+    ]))
+    
+    if RANK == 0:
+        if WITH_CUDA:
+            trainer.model.to('cpu')
+        if not os.path.exists(cfg.model_dir):
+            os.makedirs(cfg.model_dir)
 
-    #     if WITH_DDP and SIZE > 1:
-    #         sd = trainer.model.module.state_dict()
-    #         ind = trainer.model.module.input_dict()
-    #     else:
-    #         sd = trainer.model.state_dict()
-    #         ind = trainer.model.input_dict()
+        if WITH_DDP and SIZE > 1:
+            sd = trainer.model.module.state_dict()
+            ind = trainer.model.module.input_dict()
+        else:
+            sd = trainer.model.state_dict()
+            ind = trainer.model.input_dict()
 
-    #     save_dict = {
-    #                 'state_dict' : sd,
-    #                 'input_dict' : ind,
-    #                 'loss_hist_train' : trainer.loss_hist_train,
-    #                 'loss_hist_test' : trainer.loss_hist_test,
-    #                 'training_iter' : trainer.training_iter
-    #                 }
-    #     
-    #     torch.save(save_dict, trainer.model_path)
+        save_dict = {
+                    'state_dict' : sd,
+                    'input_dict' : ind,
+                    'loss_hist_train' : trainer.loss_hist_train,
+                    'loss_hist_test' : trainer.loss_hist_test,
+                    'training_iter' : trainer.training_iter
+                    }
+        
+        torch.save(save_dict, trainer.model_path)
 
-    # # Plot connectivity
-    # if (cfg.plot_connectivity):
-    #     gplot.plot_graph(trainer.data['train']['example'], RANK, cfg.work_dir)
+    # Plot connectivity
+    if (cfg.plot_connectivity):
+        gplot.plot_graph(trainer.data['train']['example'], RANK, cfg.work_dir)
 
     return 
 
@@ -1178,23 +1170,23 @@ def train_profile(cfg: DictConfig) -> None:
     if RANK == 0:
         print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=10))
 
-    # save profiler data 
-    if SIZE == 1:
-        model = trainer.model
-    else:
-        model = trainer.model.module
+    # ~~~~ # # save profiler data 
+    # ~~~~ # if SIZE == 1:
+    # ~~~~ #     model = trainer.model
+    # ~~~~ # else:
+    # ~~~~ #     model = trainer.model.module
 
-    # if path doesnt exist, make it 
-    savepath = cfg.work_dir + "/outputs/profiles/" 
-    if RANK == 0:
-        if not os.path.exists(savepath):
-            os.makedirs(savepath)
-            print("Directory created by root processor.")
-        else:
-            print("Directory already exists.")
-    COMM.Barrier()
+    # ~~~~ # # if path doesnt exist, make it 
+    # ~~~~ # savepath = cfg.work_dir + "/outputs/profiles/" 
+    # ~~~~ # if RANK == 0:
+    # ~~~~ #     if not os.path.exists(savepath):
+    # ~~~~ #         os.makedirs(savepath)
+    # ~~~~ #         print("Directory created by root processor.")
+    # ~~~~ #     else:
+    # ~~~~ #         print("Directory already exists.")
+    # ~~~~ # COMM.Barrier()
 
-    torch.save(prof.key_averages(), savepath + '/%s.tar' %(model.get_save_header()))
+    # ~~~~ # torch.save(prof.key_averages(), savepath + '/%s.tar' %(model.get_save_header()))
 
     return 
 
