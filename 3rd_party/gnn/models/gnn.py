@@ -156,8 +156,6 @@ class DistributedGNN(torch.nn.Module):
         #for item in self.input_dict():
         return header
 
-
-
 class DistributedGNN_EdgeSkip(torch.nn.Module):
     def __init__(self,
                  input_node_channels: int,
@@ -343,7 +341,6 @@ class MLP(torch.nn.Module):
         if self.norm_layer:
             self.norm_layer.reset_parameters()
         return
-
 
 class DistributedMessagePassingLayer(torch.nn.Module):
     def __init__(self, 

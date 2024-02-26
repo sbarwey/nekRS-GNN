@@ -463,7 +463,7 @@ class Trainer:
         # ~~~~ Get edge index
         if self.cfg.verbose: log.info('[RANK %d]: Loading edge index' %(RANK))
         ei = np.fromfile(path_to_ei + ".bin", dtype=np.int32).reshape((-1,2)).T
-        ei = ei.astype(np.int64)
+        ei = ei.astype(np.int64) # sb: int64 for edge_index 
         
         # ~~~~ Get local unique mask
         if self.cfg.verbose: log.info('[RANK %d]: Loading local unique mask' %(RANK))
