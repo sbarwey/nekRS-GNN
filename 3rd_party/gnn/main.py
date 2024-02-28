@@ -28,7 +28,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 from torchvision import datasets, transforms
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from torch.nn.parallel import DistributedDataParallel as DDP
 Tensor = torch.Tensor
 
@@ -270,7 +270,7 @@ class Trainer:
         n_mlp_hidden_layers = self.cfg.n_mlp_hidden_layers
         n_messagePassing_layers = self.cfg.n_messagePassing_layers
         halo_swap_mode = self.cfg.halo_swap_mode
-        name = 'POLY_%d_RANK_%d_SIZE_%d' %(poly,RANK,SIZE) 
+        name = 'POLY_%d_RANK_%d_SIZE_%d_SEED_%d' %(poly,RANK,SIZE,self.cfg.seed) 
 
         model = gnn.DistributedGNN(input_node_channels,
                            input_edge_channels,
@@ -538,8 +538,6 @@ class Trainer:
         N_gll = self.data_full.pos.shape[0] 
         data_x = data_x[:N_gll, :]
         data_y = data_y[:N_gll, :]
-
-        log.info(f'[RANK {RANK}] : N_gll full : {N_gll}')
 
         # Get data in reduced format (non-overlapping)
         data_x_reduced = data_x[self.idx_full2reduced, :]
@@ -1156,7 +1154,6 @@ def train(cfg: DictConfig) -> None:
 
 
 def train_profile(cfg: DictConfig) -> None:
-    log.info(f"[RANK {RANK}] --- test")
     start = time.time()
     trainer = Trainer(cfg)
     # epoch_times = []
@@ -1170,29 +1167,34 @@ def train_profile(cfg: DictConfig) -> None:
     if RANK == 0:
         print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=10))
 
-    # ~~~~ # # save profiler data 
-    # ~~~~ # if SIZE == 1:
-    # ~~~~ #     model = trainer.model
-    # ~~~~ # else:
-    # ~~~~ #     model = trainer.model.module
+    # save profiler data 
+    if SIZE == 1:
+        model = trainer.model
+    else:
+        model = trainer.model.module
 
-    # ~~~~ # # if path doesnt exist, make it 
-    # ~~~~ # savepath = cfg.work_dir + "/outputs/profiles/" 
-    # ~~~~ # if RANK == 0:
-    # ~~~~ #     if not os.path.exists(savepath):
-    # ~~~~ #         os.makedirs(savepath)
-    # ~~~~ #         print("Directory created by root processor.")
-    # ~~~~ #     else:
-    # ~~~~ #         print("Directory already exists.")
-    # ~~~~ # COMM.Barrier()
+    # if path doesnt exist, make it 
+    savepath = cfg.work_dir + "/outputs/profiles/" 
+    if RANK == 0:
+        if not os.path.exists(savepath):
+            os.makedirs(savepath)
+            print("Directory created by root processor.")
+        else:
+            print("Directory already exists.")
+    COMM.Barrier()
 
-    # ~~~~ # torch.save(prof.key_averages(), savepath + '/%s.tar' %(model.get_save_header()))
+    torch.save(prof.key_averages(), savepath + '/%s.tar' %(model.get_save_header()))
 
     return 
 
 @hydra.main(version_base=None, config_path='./conf', config_name='config')
 def main(cfg: DictConfig) -> None:
-    print('Rank %d, local rank %d, which has device %s. Sees %d devices.' %(RANK,int(LOCAL_RANK),DEVICE,torch.cuda.device_count()))
+    # print('Rank %d, local rank %d, which has device %s. Sees %d devices.' %(RANK,int(LOCAL_RANK),DEVICE,torch.cuda.device_count()))
+    if RANK == 0:
+        print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
+        print('INPUTS:')
+        print(OmegaConf.to_yaml(cfg)) 
+        print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
 
     if cfg.profile: 
         train_profile(cfg)
