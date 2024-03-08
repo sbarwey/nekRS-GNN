@@ -155,7 +155,6 @@ class Trainer:
         # ~~~~ Init torch stuff 
         self.setup_torch()
 
-
         # ~~~~ Setup local graph 
         self.data_reduced, self.data_full, self.idx_full2reduced, self.idx_reduced2full = self.setup_local_graph()
 
@@ -272,6 +271,18 @@ class Trainer:
         halo_swap_mode = self.cfg.halo_swap_mode
         name = 'POLY_%d_RANK_%d_SIZE_%d_SEED_%d' %(poly,RANK,SIZE,self.cfg.seed) 
 
+
+        # # Full model -- old 
+        # model = gnn.mp_gnn_distributed(input_node_channels, 
+        #                    hidden_channels, 
+        #                    output_node_channels, 
+        #                    [n_mlp_hidden_layers + 1]*3,
+        #                    n_messagePassing_layers, 
+        #                    activation = F.elu,
+        #                    halo_swap_mode= halo_swap_mode, 
+        #                    name=name)
+
+        # Full model -- new 
         model = gnn.DistributedGNN(input_node_channels,
                            input_edge_channels,
                            hidden_channels,
@@ -287,8 +298,11 @@ class Trainer:
         """
         DDP: scale learning rate by the number of GPUs
         """
+        # optimizer = optim.Adam(model.parameters(),
+        #                        lr=SIZE * self.cfg.lr_init)
         optimizer = optim.Adam(model.parameters(),
-                               lr=SIZE * self.cfg.lr_init)
+                               self.cfg.lr_init)
+
         return optimizer
 
     def build_scheduler(self, optimizer: torch.optim.Optimizer) -> torch.optim.lr_scheduler:
@@ -664,8 +678,23 @@ class Trainer:
             loss = loss.cuda()
         
         self.optimizer.zero_grad()
+
+        # re-allocate send buffer 
+        if self.cfg.halo_swap_mode == 'all_to_all':
+            #buffer_send = self.init_send_buffer(self.n_buffer_rows, self.cfg.hidden_channels, DEVICE_ID)
+            #buffer_recv = self.buffer_recv
+
+            for i in range(SIZE):
+                self.buffer_send[i] = torch.zeros_like(self.buffer_send[i])
+
+            for i in range(SIZE):
+                self.buffer_recv[i] = torch.zeros_like(self.buffer_recv[i])
+
+        else:
+            buffer_send = None
+            buffer_recv = None
         
-        # Prediction 
+        # Prediction
         out_gnn = self.model(x = data.x,
                              edge_index = data.edge_index,
                              edge_weight = data.edge_weight,
@@ -679,15 +708,15 @@ class Trainer:
                              SIZE = SIZE,
                              batch = data.batch)
 
-
         # Accumulate loss
-        target = data.y
+        target = data.x
 
         # Toy loss: evaluate at all of the nodes 
         n_nodes_local = data.n_nodes_local
 
         if SIZE == 1:
             loss = self.loss_fn(out_gnn[:n_nodes_local], target[:n_nodes_local])
+            effective_nodes = n_nodes_local 
         else: # custom 
             n_output_features = out_gnn.shape[1]
             squared_errors_local = torch.pow(out_gnn[:n_nodes_local] - target[:n_nodes_local], 2)
@@ -700,8 +729,15 @@ class Trainer:
             sum_squared_errors = distnn.all_reduce(sum_squared_errors_local)
             loss = (1.0/(effective_nodes*n_output_features)) * sum_squared_errors
 
-        loss = self.loss_fn(out_gnn[:n_nodes_local], target[:n_nodes_local])
         loss.backward()
+
+        if SIZE == 1:
+            model = self.model 
+        else:
+            model = self.model.module 
+        for p in model.parameters():
+            p.grad = 0.1 * SIZE * torch.ones_like(p.grad)  # or whatever other operation
+
         self.optimizer.step()
 
         return loss 
@@ -831,25 +867,7 @@ class Trainer:
         COMM.Barrier()
         
         torch.save(grad_dict, savepath + '/%s.tar' %(model.get_save_header()))
-
-        # # save model 
-        # if SIZE == 1:
-        #     model = self.model 
-
-        # else:
-        #     model = self.model.module 
-
-        # sd = model.state_dict()
-        # ind = model.input_dict()
-
-        # save_dict = {
-        #             'state_dict' : sd,
-        #             'input_dict' : ind,
-        #             }
-
-        # savepath = self.cfg.work_dir + '/outputs/postproc/models/tgv_poly_1'
-        # #torch.save(save_dict, savepath + '/%s.tar' %(model.get_save_header()))
-
+        
         force_abort()
         return loss 
 
@@ -888,13 +906,13 @@ class Trainer:
 
                 self.optimizer.zero_grad()
 
-                # re-allocate send buffer 
-                if self.cfg.halo_swap_mode == 'all_to_all':
-                    buffer_send = self.init_send_buffer(self.n_buffer_rows, self.cfg.hidden_channels, DEVICE_ID)
-                    buffer_recv = self.buffer_recv
-                else:
-                    buffer_send = None
-                    buffer_recv = None
+                # # re-allocate send buffer 
+                # if self.cfg.halo_swap_mode == 'all_to_all':
+                #     buffer_send = self.init_send_buffer(self.n_buffer_rows, self.cfg.hidden_channels, DEVICE_ID)
+                #     buffer_recv = self.buffer_recv
+                # else:
+                #     buffer_send = None
+                #     buffer_recv = None
 
                 with record_function(f"[RANK {RANK}] FORWARD PASS"):
                     out_gnn = self.model(x = data.x,
@@ -960,8 +978,8 @@ class Trainer:
 
         for bidx, data in enumerate(train_loader):
             batch_size = len(data)
-            loss = self.train_step_verification(data)
-            #loss = self.train_step(data)
+            #loss = self.train_step_verification(data)
+            loss = self.train_step(data)
             running_loss += loss.item()
             count += 1 # accumulate current batch count
             self.training_iter += 1 # accumulate total training iteration
@@ -1088,7 +1106,7 @@ def train(cfg: DictConfig) -> None:
             log.info(sep)
 
         # ~~~~ Step scheduler based on validation loss
-        trainer.scheduler.step(test_metrics["loss"])
+        # trainer.scheduler.step(test_metrics["loss"]) # SB: toggle scheduler
 
         # ~~~~ Checkpointing step 
         if epoch % cfg.ckptfreq == 0 and RANK == 0:

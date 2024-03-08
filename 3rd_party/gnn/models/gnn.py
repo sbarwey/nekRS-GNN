@@ -107,6 +107,7 @@ class DistributedGNN(torch.nn.Module):
         e = self.edge_encoder(e)
         
         # ~~~~ Processor
+
         for i in range(self.n_messagePassing_layers):
             x,_ = self.processor[i](x,
                                     e,
@@ -446,13 +447,54 @@ class DistributedMessagePassingLayer(torch.nn.Module):
                     n_send = len(mask_send[i])
                     buff_send[i][:n_send,:] = input_tensor[mask_send[i]]
 
-                # Perform all_to_all
+                # # Perform all_to_all
                 distnn.all_to_all(buff_recv, buff_send)
 
                 # Fill halo nodes
                 for i in neighboring_procs:
                     n_recv = len(mask_recv[i])
                     input_tensor[mask_recv[i]] = buff_recv[i][:n_recv,:]
+
+            elif self.halo_swap_mode == 'none':
+                pass
+            else:
+                raise ValueError("halo_swap_mode %s not valid. Valid options: all_to_all, sendrecv" %(self.halo_swap_mode))
+        return input_tensor
+
+
+    def halo_swap_alloc(self,
+                  input_tensor,
+                  mask_send,
+                  mask_recv,
+                  buff_send,
+                  buff_recv,
+                  neighboring_procs,
+                  SIZE):
+        """
+        Performs halo swap using send/receive buffers
+        uses all_to_all implementation
+        """
+        if SIZE > 1:
+            if self.halo_swap_mode == 'all_to_all':
+
+                # Re-alloc send buffer 
+                for i in range(SIZE):
+                    #buff_send[i] = torch.empty([n_buffer_rows, n_features], dtype=input_tensor.dtype, device=input_tensor.device)
+                    buff_send[i] = torch.empty_like(buff_send[i])
+
+                # Fill send buffer
+                for i in neighboring_procs:
+                    n_send = len(mask_send[i])
+                    buff_send[i][:n_send,:] = input_tensor[mask_send[i]]
+
+                # # Perform all_to_all
+                distnn.all_to_all(buff_recv, buff_send)
+
+                # Fill halo nodes
+                for i in neighboring_procs:
+                    n_recv = len(mask_recv[i])
+                    input_tensor[mask_recv[i]] = buff_recv[i][:n_recv,:]
+
             elif self.halo_swap_mode == 'none':
                 pass
             else:

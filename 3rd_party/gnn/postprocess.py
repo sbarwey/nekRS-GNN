@@ -36,7 +36,7 @@ if __name__ == "__main__":
 
     if 1 == 0:
         """
-        Load model and plot loss 
+        Load a SINGLE model and plot its loss 
         """
         a = torch.load('saved_models/model.tar')
         loss_train = a['loss_hist_train']
@@ -73,6 +73,61 @@ if __name__ == "__main__":
         fig, ax = plt.subplots()
         ax.plot(DATA_FULL, marker='o')
         plt.show(block=False)
+
+
+    if 1 == 1:
+        """
+        Looking at consistency in training -- loss versus iter. 
+        """
+        POLY = 1
+        SIZE_LIST = [1,2,4,8]
+        COLOR_LIST = ['tab:blue', 'tab:orange', 'tab:red', 'tab:green']
+        HALO_LIST = ['all_to_all', 'none']
+        #HALO_LIST = ['none']
+
+
+        losses = [] 
+        fig, ax = plt.subplots(figsize=(12,6))
+        for i in range(len(SIZE_LIST)):
+            for j in range(len(HALO_LIST)):
+                size = SIZE_LIST[i]
+                halo = HALO_LIST[j]
+
+                # old gnn 
+                mp = 4 
+                model_path_1 = f"./saved_models/old_gnn/real_grad/POLY_{POLY}_RANK_0_SIZE_{size}_SEED_12_input_channels_3_hidden_channels_32_output_channels_3_nMessagePassingLayers_{mp}_halo_{halo}.tar"
+                model_path_2 = f"./saved_models/old_gnn/hardcode_grad/POLY_{POLY}_RANK_0_SIZE_{size}_SEED_12_input_channels_3_hidden_channels_32_output_channels_3_nMessagePassingLayers_{mp}_halo_{halo}.tar"
+
+                # # new gnn 
+                # mp = 4
+                # model_path_1 = f"./saved_models/new_gnn/real_grad/POLY_{POLY}_RANK_0_SIZE_{size}_SEED_12_3_7_32_3_2_{mp}_{halo}.tar"
+                # model_path_2 = f"./saved_models/new_gnn/hardcode_grad/POLY_{POLY}_RANK_0_SIZE_{size}_SEED_12_3_7_32_3_2_{mp}_{halo}.tar"
+
+                a_1 = torch.load(model_path_1)
+                loss_1 = a_1['loss_hist_train']
+
+                a_2 = torch.load(model_path_2)
+                loss_2 = a_2['loss_hist_train']
+
+                losses.append(loss_1)
+
+                if halo == 'none':
+                    marker='o'
+                else:
+                    marker='s'
+
+                color = COLOR_LIST[i]
+                ax.plot(np.arange(len(loss_1))+1, loss_1, 
+                        marker=marker, color=color, ls='-', mew=1.5, lw=1.5, ms=14, fillstyle='none',
+                        label=f"{halo} -- {size} ranks")
+                #ax.plot(loss_2, marker='s', color=color, ls=ls, lw=1, ms=15, fillstyle='none')
+
+        ax.set_xlabel('Iterations')
+        ax.set_ylabel('Loss')
+        #ax.legend(fancybox=False, framealpha=1)
+        #ax.set_xlim([1,10])
+        plt.show(block=False)
+
 
     if 1 == 0: 
         """
@@ -133,7 +188,8 @@ if __name__ == "__main__":
 
                     # New gnn format: 
                     mp = 6
-                    str_temp = f"POLY_1_RANK_{RANK}_SIZE_{SIZE}_3_7_32_3_2_{mp}_{halo_mode}.tar" 
+                    seed = 12
+                    str_temp = f"POLY_1_RANK_{RANK}_SIZE_{SIZE}_SEED_{seed}_3_7_32_3_2_{mp}_{halo_mode}.tar" 
 
                     a = torch.load(path_32 + "/" + str_temp, map_location=torch.device('cpu')) 
                     #data_temp_32[RANK, :3] = a['total_sum_x_scaled']
@@ -323,7 +379,7 @@ if __name__ == "__main__":
         ax.set_xlabel('Number of GPUs')
         plt.show(block=False)
 
-    if 1 == 1:
+    if 1 == 0:
         """
         Looking at profiler outputs 
         """
@@ -439,7 +495,8 @@ if __name__ == "__main__":
                         # ax.legend()
                         # plt.show(block=False)
 
-        if 1 == 1:
+        # Scaling plots 
+        if 1 == 0:
             HALO_MODE_LIST = ['none', 'all_to_all']
             seed = 12
             input_channels_node = 3
