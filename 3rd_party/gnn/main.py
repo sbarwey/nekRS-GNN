@@ -66,7 +66,7 @@ try:
     WITH_CUDA = torch.cuda.is_available()
 
     # Override gpu utilization
-    # WITH_CUDA = False
+    WITH_CUDA = False
 
     DEVICE = 'gpu' if WITH_CUDA else 'cpu'
     if DEVICE == 'gpu':
@@ -541,8 +541,8 @@ class Trainer:
 
         # Load data 
         main_path = self.cfg.gnn_outputs_path
-        path_to_x = main_path + 'fld_u_time_10.0_rank_%d_size_%d' %(RANK,SIZE)
-        path_to_y = main_path + 'fld_u_time_10.0_rank_%d_size_%d' %(RANK,SIZE)
+        path_to_x = main_path + 'fld_u_time_0.0_rank_%d_size_%d' %(RANK,SIZE)
+        path_to_y = main_path + 'fld_u_time_0.0_rank_%d_size_%d' %(RANK,SIZE)
         data_x = np.fromfile(path_to_x + ".bin", dtype=np.float64).reshape((-1,3))
         data_x = data_x.astype(NP_FLOAT_DTYPE)
         data_y = np.fromfile(path_to_y + ".bin", dtype=np.float64).reshape((-1,3))
@@ -1044,7 +1044,7 @@ class Trainer:
         log.info(f"[RANK {RANK}] -- model save header : {model.get_save_header()}")
 
         # if path doesnt exist, make it 
-        savepath = self.cfg.work_dir + "/outputs/GraphStatistics/" 
+        savepath = self.cfg.work_dir + "/outputs/GraphStatistics/weak_scaling" 
         if RANK == 0:
             if not os.path.exists(savepath):
                 os.makedirs(savepath)
@@ -1075,98 +1075,98 @@ def train(cfg: DictConfig) -> None:
     trainer.writeGraphStatistics()
     epoch_times = []
 
-    for epoch in range(trainer.epoch_start, cfg.epochs+1):
-        # ~~~~ Training step 
-        t0 = time.time()
-        trainer.epoch = epoch
-        train_metrics = trainer.train_epoch(epoch)
-        trainer.loss_hist_train[epoch-1] = train_metrics["loss"]
+    # ~~~~ # for epoch in range(trainer.epoch_start, cfg.epochs+1):
+    # ~~~~ #     # ~~~~ Training step 
+    # ~~~~ #     t0 = time.time()
+    # ~~~~ #     trainer.epoch = epoch
+    # ~~~~ #     train_metrics = trainer.train_epoch(epoch)
+    # ~~~~ #     trainer.loss_hist_train[epoch-1] = train_metrics["loss"]
 
-        epoch_time = time.time() - t0
-        epoch_times.append(epoch_time)
+    # ~~~~ #     epoch_time = time.time() - t0
+    # ~~~~ #     epoch_times.append(epoch_time)
 
-        # ~~~~ Validation step
-        test_metrics = trainer.test()
-        trainer.loss_hist_test[epoch-1] = test_metrics["loss"]
-        
-        # ~~~~ Printing
-        if RANK == 0:
-            astr = f'[TEST] loss={test_metrics["loss"]:.4e}'
-            sepstr = '-' * len(astr)
-            log.info(sepstr)
-            log.info(astr)
-            log.info(sepstr)
-            summary = '  '.join([
-                '[TRAIN]',
-                f'loss={train_metrics["loss"]:.4e}',
-                f'epoch_time={epoch_time:.4g} sec'
-            ])
-            log.info((sep := '-' * len(summary)))
-            log.info(summary)
-            log.info(sep)
+    # ~~~~ #     # ~~~~ Validation step
+    # ~~~~ #     test_metrics = trainer.test()
+    # ~~~~ #     trainer.loss_hist_test[epoch-1] = test_metrics["loss"]
+    # ~~~~ #     
+    # ~~~~ #     # ~~~~ Printing
+    # ~~~~ #     if RANK == 0:
+    # ~~~~ #         astr = f'[TEST] loss={test_metrics["loss"]:.4e}'
+    # ~~~~ #         sepstr = '-' * len(astr)
+    # ~~~~ #         log.info(sepstr)
+    # ~~~~ #         log.info(astr)
+    # ~~~~ #         log.info(sepstr)
+    # ~~~~ #         summary = '  '.join([
+    # ~~~~ #             '[TRAIN]',
+    # ~~~~ #             f'loss={train_metrics["loss"]:.4e}',
+    # ~~~~ #             f'epoch_time={epoch_time:.4g} sec'
+    # ~~~~ #         ])
+    # ~~~~ #         log.info((sep := '-' * len(summary)))
+    # ~~~~ #         log.info(summary)
+    # ~~~~ #         log.info(sep)
 
-        # ~~~~ Step scheduler based on validation loss
-        # trainer.scheduler.step(test_metrics["loss"]) # SB: toggle scheduler
+    # ~~~~ #     # ~~~~ Step scheduler based on validation loss
+    # ~~~~ #     # trainer.scheduler.step(test_metrics["loss"]) # SB: toggle scheduler
 
-        # ~~~~ Checkpointing step 
-        if epoch % cfg.ckptfreq == 0 and RANK == 0:
-            astr = 'Checkpointing on root processor, epoch = %d' %(epoch)
-            sepstr = '-' * len(astr)
-            log.info(sepstr)
-            log.info(astr)
-            log.info(sepstr)
+    # ~~~~ #     # ~~~~ Checkpointing step 
+    # ~~~~ #     if epoch % cfg.ckptfreq == 0 and RANK == 0:
+    # ~~~~ #         astr = 'Checkpointing on root processor, epoch = %d' %(epoch)
+    # ~~~~ #         sepstr = '-' * len(astr)
+    # ~~~~ #         log.info(sepstr)
+    # ~~~~ #         log.info(astr)
+    # ~~~~ #         log.info(sepstr)
 
-            if not os.path.exists(cfg.ckpt_dir):
-                os.makedirs(cfg.ckpt_dir)
+    # ~~~~ #         if not os.path.exists(cfg.ckpt_dir):
+    # ~~~~ #             os.makedirs(cfg.ckpt_dir)
 
-            if WITH_DDP and SIZE > 1:
-                sd = trainer.model.module.state_dict()
-            else:
-                sd = trainer.model.state_dict()
+    # ~~~~ #         if WITH_DDP and SIZE > 1:
+    # ~~~~ #             sd = trainer.model.module.state_dict()
+    # ~~~~ #         else:
+    # ~~~~ #             sd = trainer.model.state_dict()
 
-            ckpt = {'epoch' : epoch,
-                    'training_iter' : trainer.training_iter,
-                    'model_state_dict' : sd,
-                    'optimizer_state_dict' : trainer.optimizer.state_dict(),
-                    'scheduler_state_dict' : trainer.scheduler.state_dict(),
-                    'loss_hist_train' : trainer.loss_hist_train,
-                    'loss_hist_test' : trainer.loss_hist_test}
-            
-            torch.save(ckpt, trainer.ckpt_path)
-        dist.barrier()
+    # ~~~~ #         ckpt = {'epoch' : epoch,
+    # ~~~~ #                 'training_iter' : trainer.training_iter,
+    # ~~~~ #                 'model_state_dict' : sd,
+    # ~~~~ #                 'optimizer_state_dict' : trainer.optimizer.state_dict(),
+    # ~~~~ #                 'scheduler_state_dict' : trainer.scheduler.state_dict(),
+    # ~~~~ #                 'loss_hist_train' : trainer.loss_hist_train,
+    # ~~~~ #                 'loss_hist_test' : trainer.loss_hist_test}
+    # ~~~~ #         
+    # ~~~~ #         torch.save(ckpt, trainer.ckpt_path)
+    # ~~~~ #     dist.barrier()
 
-    rstr = f'[{RANK}] ::'
-    log.info(' '.join([
-        rstr,
-        f'Total training time: {time.time() - start} seconds'
-    ]))
-    
-    if RANK == 0:
-        if WITH_CUDA:
-            trainer.model.to('cpu')
-        if not os.path.exists(cfg.model_dir):
-            os.makedirs(cfg.model_dir)
+    # ~~~~ # rstr = f'[{RANK}] ::'
+    # ~~~~ # log.info(' '.join([
+    # ~~~~ #     rstr,
+    # ~~~~ #     f'Total training time: {time.time() - start} seconds'
+    # ~~~~ # ]))
+    # ~~~~ # 
+    # ~~~~ # if RANK == 0:
+    # ~~~~ #     if WITH_CUDA:
+    # ~~~~ #         trainer.model.to('cpu')
+    # ~~~~ #     if not os.path.exists(cfg.model_dir):
+    # ~~~~ #         os.makedirs(cfg.model_dir)
 
-        if WITH_DDP and SIZE > 1:
-            sd = trainer.model.module.state_dict()
-            ind = trainer.model.module.input_dict()
-        else:
-            sd = trainer.model.state_dict()
-            ind = trainer.model.input_dict()
+    # ~~~~ #     if WITH_DDP and SIZE > 1:
+    # ~~~~ #         sd = trainer.model.module.state_dict()
+    # ~~~~ #         ind = trainer.model.module.input_dict()
+    # ~~~~ #     else:
+    # ~~~~ #         sd = trainer.model.state_dict()
+    # ~~~~ #         ind = trainer.model.input_dict()
 
-        save_dict = {
-                    'state_dict' : sd,
-                    'input_dict' : ind,
-                    'loss_hist_train' : trainer.loss_hist_train,
-                    'loss_hist_test' : trainer.loss_hist_test,
-                    'training_iter' : trainer.training_iter
-                    }
-        
-        torch.save(save_dict, trainer.model_path)
+    # ~~~~ #     save_dict = {
+    # ~~~~ #                 'state_dict' : sd,
+    # ~~~~ #                 'input_dict' : ind,
+    # ~~~~ #                 'loss_hist_train' : trainer.loss_hist_train,
+    # ~~~~ #                 'loss_hist_test' : trainer.loss_hist_test,
+    # ~~~~ #                 'training_iter' : trainer.training_iter
+    # ~~~~ #                 }
+    # ~~~~ #     
+    # ~~~~ #     torch.save(save_dict, trainer.model_path)
 
-    # Plot connectivity
-    if (cfg.plot_connectivity):
-        gplot.plot_graph(trainer.data['train']['example'], RANK, cfg.work_dir)
+    # ~~~~ # # Plot connectivity
+    # ~~~~ # if (cfg.plot_connectivity):
+    # ~~~~ #     gplot.plot_graph(trainer.data['train']['example'], RANK, cfg.work_dir)
 
     return 
 
