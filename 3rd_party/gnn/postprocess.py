@@ -75,7 +75,7 @@ if __name__ == "__main__":
         plt.show(block=False)
 
 
-    if 1 == 1:
+    if 1 == 0:
         """
         Looking at consistency in training -- loss versus iter. 
         """
@@ -127,7 +127,6 @@ if __name__ == "__main__":
         #ax.legend(fancybox=False, framealpha=1)
         #ax.set_xlim([1,10])
         plt.show(block=False)
-
 
     if 1 == 0: 
         """
@@ -264,120 +263,138 @@ if __name__ == "__main__":
         # plt.show(block=False)
 
 
-    if 1 == 0:
+    if 1 == 1:
         """
         Looking at graph stats -- number of nodes, edges, etc. 
         """
 
-        POLY_LIST = [1, 3, 5, 7]  
-        SIZE_LIST = [1, 2, 4, 8, 16, 32, 64, 128]
+        # POLY_LIST = [1, 3, 5, 7]  
+        NELE_LIST = [8, 16, 20, 24, 32, 40, 48, 56, 64]
+        POLY_LIST = [5]  
+        SIZE_LIST = [1, 2, 4, 8, 16, 32, 64] # 128]
 
-        n_nodes_local = [] 
-        n_nodes_halo = []
-        n_edges = [] 
-        for i in range(len(POLY_LIST)):
-            POLY = POLY_LIST[i]
-            n_nodes_local.append([])
-            n_nodes_halo.append([])
-            n_edges.append([])
-            for j in range(len(SIZE_LIST)):
-                SIZE = SIZE_LIST[j]
-                n_nodes_local[i].append(np.zeros(SIZE))
-                n_nodes_halo[i].append(np.zeros(SIZE))
-                n_edges[i].append(np.zeros(SIZE))
-                for RANK in range(SIZE):
+        n_nodes_local_ele = []
+        n_nodes_halo_ele = []
+        n_edges_ele = []
+        for e in range(len(NELE_LIST)):
+            Nele = NELE_LIST[e]
+            n_nodes_local = [] 
+            n_nodes_halo = []
+            n_edges = [] 
+            for i in range(len(POLY_LIST)):
+                POLY = POLY_LIST[i]
+                n_nodes_local.append([])
+                n_nodes_halo.append([])
+                n_edges.append([])
+                for j in range(len(SIZE_LIST)):
+                    SIZE = SIZE_LIST[j]
+                    n_nodes_local[i].append(np.zeros(SIZE))
+                    n_nodes_halo[i].append(np.zeros(SIZE))
+                    n_edges[i].append(np.zeros(SIZE))
+                    for RANK in range(SIZE):
 
-                    try: 
-                        str_temp = f"POLY_{POLY}_RANK_{RANK}_SIZE_{SIZE}_input_channels_3_hidden_channels_32_output_channels_3_nMessagePassingLayers_5_halo_all_to_all.tar"
-                        a = torch.load("./outputs/GraphStatistics/" + str_temp)
-                    except FileNotFoundError:
-                        str_temp = f"POLY_{POLY}_RANK_{RANK}_SIZE_{SIZE}_input_channels_3_hidden_channels_32_output_channels_3_nMessagePassingLayers_2_halo_none.tar"
-                        a = torch.load("./outputs/GraphStatistics/" + str_temp)
+                        str_temp = f"POLY_{POLY}_RANK_{RANK}_SIZE_{SIZE}_SEED_12_3_7_32_3_2_4_none.tar"
+                        a = torch.load(f"./outputs/GraphStatistics/weak_scaling/ne_{Nele}/" + str_temp)
 
-                    
-                    n_nodes_local[i][j][RANK] = a['n_nodes_local'].item()
-                    n_nodes_halo[i][j][RANK] = a['n_nodes_halo'].item()
-                    n_edges[i][j][RANK] = a['n_edges']
+                        # ~~~~ old 
+                        # try: 
+                        #     str_temp = f"POLY_{POLY}_RANK_{RANK}_SIZE_{SIZE}_input_channels_3_hidden_channels_32_output_channels_3_nMessagePassingLayers_5_halo_all_to_all.tar"
+                        #     a = torch.load("./outputs/GraphStatistics/" + str_temp)
+                        # except FileNotFoundError:
+                        #     str_temp = f"POLY_{POLY}_RANK_{RANK}_SIZE_{SIZE}_input_channels_3_hidden_channels_32_output_channels_3_nMessagePassingLayers_2_halo_none.tar"
+                        #     a = torch.load("./outputs/GraphStatistics/" + str_temp)
 
+                        
+                        n_nodes_local[i][j][RANK] = a['n_nodes_local'].item()
+                        n_nodes_halo[i][j][RANK] = a['n_nodes_halo'].item()
+                        n_edges[i][j][RANK] = a['n_edges']
+
+            n_nodes_local_ele.append(n_nodes_local)
+            n_nodes_halo_ele.append(n_nodes_halo)
+            n_edges_ele.append(n_edges)
 
 
         # Local nodes per rank 
         ms = 100
         fig, ax = plt.subplots(figsize=(8,7))
-        for j in range(len(SIZE_LIST)):
-            SIZE = SIZE_LIST[j]
-            ax.scatter(SIZE*np.ones(SIZE), n_nodes_local[0][j], s=ms, color='black') 
-            ax.scatter(SIZE*np.ones(SIZE), n_nodes_local[1][j], s=ms, color='blue') 
-            ax.scatter(SIZE*np.ones(SIZE), n_nodes_local[2][j], s=ms, color='red') 
-            ax.scatter(SIZE*np.ones(SIZE), n_nodes_local[3][j], s=ms, color='green') 
+        for e in range(len(NELE_LIST)):
+            for j in range(len(SIZE_LIST)):
+                SIZE = SIZE_LIST[j]
+                ax.scatter(SIZE*np.ones(SIZE), n_nodes_local_ele[e][0][j], s=ms, color='black')
+                ax.text(SIZE, n_nodes_local_ele[e][0][j][0], NELE_LIST[e], color='blue')
+                print(f"Nele={NELE_LIST[e]}, SIZE={SIZE}, nodes={n_nodes_local_ele[e][0][j][0]}")
+                #ax.scatter(SIZE*np.ones(SIZE), n_nodes_local_ele[e][1][j], s=ms, color='blue', marker=marker[e]) 
+                #ax.scatter(SIZE*np.ones(SIZE), n_nodes_local_ele[e][2][j], s=ms, color='red', marker=marker[e]) 
+                #ax.scatter(SIZE*np.ones(SIZE), n_nodes_local[3][j], s=ms, color='green') 
         ax.set_yscale('log')
         ax.set_xscale('log')
         ax.set_ylabel('Local Graph Nodes')
         ax.set_xlabel('Number of GPUs')
+        #ax.legend(framealpha=1)
         plt.show(block=False)
 
-        # Halo nodes per rank 
-        ms = 100
-        fig, ax = plt.subplots(figsize=(8,7))
-        for j in range(len(SIZE_LIST)):
-            SIZE = SIZE_LIST[j]
-            ax.scatter(SIZE*np.ones(SIZE), n_nodes_halo[0][j], s=ms, color='black') 
-            ax.scatter(SIZE*np.ones(SIZE), n_nodes_halo[1][j], s=ms, color='blue') 
-            ax.scatter(SIZE*np.ones(SIZE), n_nodes_halo[2][j], s=ms, color='red') 
-            ax.scatter(SIZE*np.ones(SIZE), n_nodes_halo[3][j], s=ms, color='green') 
-        ax.set_yscale('log')
-        ax.set_xscale('log')
-        ax.set_ylabel('Halo Graph Nodes')
-        ax.set_xlabel('Number of GPUs')
-        plt.show(block=False)
+        # ~~~~ # # Halo nodes per rank 
+        # ~~~~ # ms = 100
+        # ~~~~ # fig, ax = plt.subplots(figsize=(8,7))
+        # ~~~~ # for j in range(len(SIZE_LIST)):
+        # ~~~~ #     SIZE = SIZE_LIST[j]
+        # ~~~~ #     ax.scatter(SIZE*np.ones(SIZE), n_nodes_halo[0][j], s=ms, color='black') 
+        # ~~~~ #     ax.scatter(SIZE*np.ones(SIZE), n_nodes_halo[1][j], s=ms, color='blue') 
+        # ~~~~ #     ax.scatter(SIZE*np.ones(SIZE), n_nodes_halo[2][j], s=ms, color='red') 
+        # ~~~~ #     ax.scatter(SIZE*np.ones(SIZE), n_nodes_halo[3][j], s=ms, color='green') 
+        # ~~~~ # ax.set_yscale('log')
+        # ~~~~ # ax.set_xscale('log')
+        # ~~~~ # ax.set_ylabel('Halo Graph Nodes')
+        # ~~~~ # ax.set_xlabel('Number of GPUs')
+        # ~~~~ # plt.show(block=False)
 
 
-        # Halo nodes / local nodes 
-        ms = 100
-        fig, ax = plt.subplots(figsize=(8,7))
-        for j in range(len(SIZE_LIST)):
-            SIZE = SIZE_LIST[j]
-            ax.scatter(SIZE*np.ones(SIZE), n_nodes_halo[0][j]/n_nodes_local[0][j], s=ms, color='black') 
-            ax.scatter(SIZE*np.ones(SIZE), n_nodes_halo[1][j]/n_nodes_local[1][j], s=ms, color='blue') 
-            ax.scatter(SIZE*np.ones(SIZE), n_nodes_halo[2][j]/n_nodes_local[2][j], s=ms, color='red') 
-            ax.scatter(SIZE*np.ones(SIZE), n_nodes_halo[3][j]/n_nodes_local[3][j], s=ms, color='green') 
-        ax.set_yscale('log')
-        ax.set_xscale('log')
-        ax.set_ylabel('Halo Nodes / Local Nodes')
-        ax.set_xlabel('Number of GPUs')
-        plt.show(block=False)
+        # ~~~~ # # Halo nodes / local nodes 
+        # ~~~~ # ms = 100
+        # ~~~~ # fig, ax = plt.subplots(figsize=(8,7))
+        # ~~~~ # for j in range(len(SIZE_LIST)):
+        # ~~~~ #     SIZE = SIZE_LIST[j]
+        # ~~~~ #     ax.scatter(SIZE*np.ones(SIZE), n_nodes_halo[0][j]/n_nodes_local[0][j], s=ms, color='black') 
+        # ~~~~ #     ax.scatter(SIZE*np.ones(SIZE), n_nodes_halo[1][j]/n_nodes_local[1][j], s=ms, color='blue') 
+        # ~~~~ #     ax.scatter(SIZE*np.ones(SIZE), n_nodes_halo[2][j]/n_nodes_local[2][j], s=ms, color='red') 
+        # ~~~~ #     ax.scatter(SIZE*np.ones(SIZE), n_nodes_halo[3][j]/n_nodes_local[3][j], s=ms, color='green') 
+        # ~~~~ # ax.set_yscale('log')
+        # ~~~~ # ax.set_xscale('log')
+        # ~~~~ # ax.set_ylabel('Halo Nodes / Local Nodes')
+        # ~~~~ # ax.set_xlabel('Number of GPUs')
+        # ~~~~ # plt.show(block=False)
 
 
-        # # Total halo nodes (summed over all ranks)
-        # ms = 100
-        # fig, ax = plt.subplots(figsize=(8,7))
-        # for j in range(len(SIZE_LIST)):
-        #     SIZE = SIZE_LIST[j]
-        #     ax.scatter(SIZE, np.sum(n_nodes_halo[0][j]), s=ms, color='black') 
-        #     ax.scatter(SIZE, np.sum(n_nodes_halo[1][j]), s=ms, color='blue') 
-        #     ax.scatter(SIZE, np.sum(n_nodes_halo[2][j]), s=ms, color='red') 
-        #     ax.scatter(SIZE, np.sum(n_nodes_halo[3][j]), s=ms, color='green') 
-        # ax.set_yscale('log')
-        # ax.set_xscale('log')
-        # ax.set_ylabel('Total Halo Graph Nodes')
-        # ax.set_xlabel('Ranks')
-        # plt.show(block=False)
+        # ~~~~ # # # Total halo nodes (summed over all ranks)
+        # ~~~~ # # ms = 100
+        # ~~~~ # # fig, ax = plt.subplots(figsize=(8,7))
+        # ~~~~ # # for j in range(len(SIZE_LIST)):
+        # ~~~~ # #     SIZE = SIZE_LIST[j]
+        # ~~~~ # #     ax.scatter(SIZE, np.sum(n_nodes_halo[0][j]), s=ms, color='black') 
+        # ~~~~ # #     ax.scatter(SIZE, np.sum(n_nodes_halo[1][j]), s=ms, color='blue') 
+        # ~~~~ # #     ax.scatter(SIZE, np.sum(n_nodes_halo[2][j]), s=ms, color='red') 
+        # ~~~~ # #     ax.scatter(SIZE, np.sum(n_nodes_halo[3][j]), s=ms, color='green') 
+        # ~~~~ # # ax.set_yscale('log')
+        # ~~~~ # # ax.set_xscale('log')
+        # ~~~~ # # ax.set_ylabel('Total Halo Graph Nodes')
+        # ~~~~ # # ax.set_xlabel('Ranks')
+        # ~~~~ # # plt.show(block=False)
 
 
-        # Edges per rank 
-        ms = 100
-        fig, ax = plt.subplots(figsize=(8,7))
-        for j in range(len(SIZE_LIST)):
-            SIZE = SIZE_LIST[j]
-            ax.scatter(SIZE*np.ones(SIZE), n_edges[0][j], s=ms, color='black') 
-            ax.scatter(SIZE*np.ones(SIZE), n_edges[1][j], s=ms, color='blue') 
-            ax.scatter(SIZE*np.ones(SIZE), n_edges[2][j], s=ms, color='red') 
-            ax.scatter(SIZE*np.ones(SIZE), n_edges[3][j], s=ms, color='green') 
-        ax.set_yscale('log')
-        ax.set_xscale('log')
-        ax.set_ylabel('Graph Edges')
-        ax.set_xlabel('Number of GPUs')
-        plt.show(block=False)
+        # ~~~~ # # Edges per rank 
+        # ~~~~ # ms = 100
+        # ~~~~ # fig, ax = plt.subplots(figsize=(8,7))
+        # ~~~~ # for j in range(len(SIZE_LIST)):
+        # ~~~~ #     SIZE = SIZE_LIST[j]
+        # ~~~~ #     ax.scatter(SIZE*np.ones(SIZE), n_edges[0][j], s=ms, color='black') 
+        # ~~~~ #     ax.scatter(SIZE*np.ones(SIZE), n_edges[1][j], s=ms, color='blue') 
+        # ~~~~ #     ax.scatter(SIZE*np.ones(SIZE), n_edges[2][j], s=ms, color='red') 
+        # ~~~~ #     ax.scatter(SIZE*np.ones(SIZE), n_edges[3][j], s=ms, color='green') 
+        # ~~~~ # ax.set_yscale('log')
+        # ~~~~ # ax.set_xscale('log')
+        # ~~~~ # ax.set_ylabel('Graph Edges')
+        # ~~~~ # ax.set_xlabel('Number of GPUs')
+        # ~~~~ # plt.show(block=False)
 
     if 1 == 0:
         """
