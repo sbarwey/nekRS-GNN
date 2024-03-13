@@ -65,8 +65,8 @@ try:
 
     WITH_CUDA = torch.cuda.is_available()
 
-    # Override gpu utilization
-    WITH_CUDA = False
+    # # Override gpu utilization
+    # WITH_CUDA = False
 
     DEVICE = 'gpu' if WITH_CUDA else 'cpu'
     if DEVICE == 'gpu':
@@ -906,14 +906,21 @@ class Trainer:
 
                 self.optimizer.zero_grad()
 
-                # # re-allocate send buffer 
-                # if self.cfg.halo_swap_mode == 'all_to_all':
-                #     buffer_send = self.init_send_buffer(self.n_buffer_rows, self.cfg.hidden_channels, DEVICE_ID)
-                #     buffer_recv = self.buffer_recv
-                # else:
-                #     buffer_send = None
-                #     buffer_recv = None
+                # re-allocate send buffer 
+                if self.cfg.halo_swap_mode == 'all_to_all':
+                    #buffer_send = self.init_send_buffer(self.n_buffer_rows, self.cfg.hidden_channels, DEVICE_ID)
+                    #buffer_recv = self.buffer_recv
 
+                    for i in range(SIZE):
+                        self.buffer_send[i] = torch.zeros_like(self.buffer_send[i])
+
+                    for i in range(SIZE):
+                        self.buffer_recv[i] = torch.zeros_like(self.buffer_recv[i])
+
+                else:
+                    buffer_send = None
+                    buffer_recv = None
+                
                 with record_function(f"[RANK {RANK}] FORWARD PASS"):
                     out_gnn = self.model(x = data.x,
                                          edge_index = data.edge_index,
@@ -922,8 +929,8 @@ class Trainer:
                                          halo_info = data.halo_info,
                                          mask_send = self.mask_send,
                                          mask_recv = self.mask_recv,
-                                         buffer_send = buffer_send,
-                                         buffer_recv = buffer_recv,
+                                         buffer_send = self.buffer_send,
+                                         buffer_recv = self.buffer_recv,
                                          neighboring_procs = self.neighboring_procs,
                                          SIZE = SIZE,
                                          batch = data.batch)

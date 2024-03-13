@@ -3,7 +3,7 @@ profile: False
 verbose: False
 seed: 12
 epochs: 20
-backend: gloo
+backend: nccl
 lr_init: 0.00001
 # momentum: 0.5
 use_noise : True
