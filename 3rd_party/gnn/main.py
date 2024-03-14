@@ -300,7 +300,7 @@ class Trainer:
         # optimizer = optim.Adam(model.parameters(),
         #                        lr=SIZE * self.cfg.lr_init)
         optimizer = optim.Adam(model.parameters(),
-                               self.cfg.lr_init)
+                               lr=self.cfg.lr_init)
 
         return optimizer
 
