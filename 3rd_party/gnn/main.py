@@ -540,8 +540,8 @@ class Trainer:
 
         # Load data 
         main_path = self.cfg.gnn_outputs_path
-        path_to_x = main_path + 'fld_u_time_10.0_rank_%d_size_%d' %(RANK,SIZE)
-        path_to_y = main_path + 'fld_u_time_10.0_rank_%d_size_%d' %(RANK,SIZE)
+        path_to_x = main_path + 'fld_u_time_0.0_rank_%d_size_%d' %(RANK,SIZE)
+        path_to_y = main_path + 'fld_u_time_0.0_rank_%d_size_%d' %(RANK,SIZE)
         data_x = np.fromfile(path_to_x + ".bin", dtype=np.float64).reshape((-1,3))
         data_x = data_x.astype(NP_FLOAT_DTYPE)
         data_y = np.fromfile(path_to_y + ".bin", dtype=np.float64).reshape((-1,3))
@@ -653,7 +653,7 @@ class Trainer:
             data.edge_weight = data.edge_weight.cuda()
             data.edge_attr = data.edge_attr.cuda()
             data.batch = data.batch.cuda() if data.batch else None
-            #data.halo_info = data.halo_info.cuda()
+            data.halo_info = data.halo_info.cuda()
             data.node_degree = data.node_degree.cuda()
             loss = loss.cuda()
         
@@ -732,7 +732,7 @@ class Trainer:
             data.edge_weight = data.edge_weight.cuda()
             data.edge_attr = data.edge_attr.cuda()
             data.batch = data.batch.cuda() if data.batch else None
-            #data.halo_info = data.halo_info.cuda()
+            data.halo_info = data.halo_info.cuda()
             data.node_degree = data.node_degree.cuda()
             loss = loss.cuda()
                     
@@ -878,7 +878,7 @@ class Trainer:
                     data.edge_weight = data.edge_weight.cuda()
                     data.edge_attr = data.edge_attr.cuda()
                     data.batch = data.batch.cuda() if data.batch else None
-                    #data.halo_info = data.halo_info.cuda()
+                    data.halo_info = data.halo_info.cuda()
                     data.node_degree = data.node_degree.cuda()
                     loss = loss.cuda()
 
@@ -1186,7 +1186,7 @@ def train_profile(cfg: DictConfig) -> None:
             print("Directory already exists.")
     COMM.Barrier()
 
-    #torch.save(prof.key_averages(), savepath + '/%s.tar' %(model.get_save_header()))
+    torch.save(prof.key_averages(), savepath + '/%s.tar' %(model.get_save_header()))
 
     return 
 
