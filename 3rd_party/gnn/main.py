@@ -715,8 +715,8 @@ class Trainer:
             model = self.model 
         else:
             model = self.model.module 
-        for p in model.parameters():
-            p.grad = 0.1 * SIZE * torch.ones_like(p.grad)  # or whatever other operation
+        #for p in model.parameters():
+        #    p.grad = 0.1 * SIZE * torch.ones_like(p.grad)  # or whatever other operation
 
         self.optimizer.step()
 
