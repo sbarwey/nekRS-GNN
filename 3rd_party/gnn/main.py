@@ -263,14 +263,13 @@ class Trainer:
 
         # Full model 
         input_node_channels = sample.x.shape[1]
-        input_edge_channels = sample.pos.shape[1] + sample.x.shape[1] + 1 
+        input_edge_channels = sample.edge_attr.shape[1]
         hidden_channels = self.cfg.hidden_channels
         output_node_channels = sample.y.shape[1]
         n_mlp_hidden_layers = self.cfg.n_mlp_hidden_layers
         n_messagePassing_layers = self.cfg.n_messagePassing_layers
         halo_swap_mode = self.cfg.halo_swap_mode
         name = 'POLY_%d_RANK_%d_SIZE_%d_SEED_%d' %(poly,RANK,SIZE,self.cfg.seed) 
-
 
         # # Full model -- old 
         # model = gnn.mp_gnn_distributed(input_node_channels, 
@@ -541,8 +540,8 @@ class Trainer:
 
         # Load data 
         main_path = self.cfg.gnn_outputs_path
-        path_to_x = main_path + 'fld_u_time_0.0_rank_%d_size_%d' %(RANK,SIZE)
-        path_to_y = main_path + 'fld_u_time_0.0_rank_%d_size_%d' %(RANK,SIZE)
+        path_to_x = main_path + 'fld_u_time_10.0_rank_%d_size_%d' %(RANK,SIZE)
+        path_to_y = main_path + 'fld_u_time_10.0_rank_%d_size_%d' %(RANK,SIZE)
         data_x = np.fromfile(path_to_x + ".bin", dtype=np.float64).reshape((-1,3))
         data_x = data_x.astype(NP_FLOAT_DTYPE)
         data_y = np.fromfile(path_to_y + ".bin", dtype=np.float64).reshape((-1,3))
@@ -595,13 +594,6 @@ class Trainer:
         n_nodes = self.data_reduced.pos.shape[0]
         device_for_loading = 'cpu'
 
-        # Populate edge_attrs
-        data_ref = self.data_reduced
-        cart = torch_geometric.transforms.Cartesian(norm=False, max_value = None, cat = False)
-        dist = torch_geometric.transforms.Distance(norm = False, max_value = None, cat = True)
-        cart(data_ref) # adds cartesian/component-wise distance
-        dist(data_ref) # adds euclidean distance
-
         # Get dictionary 
         reduced_graph_dict = self.data_reduced.to_dict()
 
@@ -621,31 +613,18 @@ class Trainer:
         data_temp.edge_weight = torch.cat((data_temp.edge_weight, edge_weight_halo), dim=0)
         data_temp.edge_weight_temp = data_temp.edge_weight
 
+        # Populate edge_attrs
+        cart = torch_geometric.transforms.Cartesian(norm=False, max_value = None, cat = False)
+        dist = torch_geometric.transforms.Distance(norm = False, max_value = None, cat = True)
+        cart(data_temp) # adds cartesian/component-wise distance
+        dist(data_temp) # adds euclidean distance
+
         data_temp = data_temp.to(device_for_loading)
         data_train_list.append(data_temp)
         n_train = len(data_train_list) # should be 1
        
-        # Create validation dataset -- same data for demo  
-        data_valid_list = []
-        data_temp = Data(   
-                            x = torch.tensor(data_x_reduced), 
-                            y = torch.tensor(data_y_reduced)
-                        )
-        for key in reduced_graph_dict.keys():
-            data_temp[key] = reduced_graph_dict[key]
-        data_temp.x = torch.cat((data_temp.x, data_x_halo), dim=0)
-        data_temp.y = torch.cat((data_temp.y, data_y_halo), dim=0)
-        data_temp.pos = torch.cat((data_temp.pos, pos_halo), dim=0)
-        data_temp.node_degree = torch.cat((data_temp.node_degree, node_degree_halo), dim=0)
-        data_temp.edge_index = torch.cat((data_temp.edge_index, edge_index_halo), dim=1)
-        data_temp.edge_weight = torch.cat((data_temp.edge_weight, edge_weight_halo), dim=0)
-
-        data_temp = data_temp.to(device_for_loading)
-        data_valid_list.append(data_temp)
-        n_valid = len(data_valid_list) # should be 1
-
         train_dataset = data_train_list
-        test_dataset = data_valid_list 
+        test_dataset = data_train_list # no test dataset right now 
 
         # No need for distributed sampler -- create standard dataset loader  
         train_loader = torch_geometric.loader.DataLoader(train_dataset, batch_size=self.cfg.batch_size, shuffle=False)
@@ -673,8 +652,9 @@ class Trainer:
             data.edge_index = data.edge_index.cuda()
             data.edge_weight = data.edge_weight.cuda()
             data.edge_attr = data.edge_attr.cuda()
-            data.pos = data.pos.cuda()
-            data.batch = data.batch.cuda()
+            data.batch = data.batch.cuda() if data.batch else None
+            #data.halo_info = data.halo_info.cuda()
+            data.node_degree = data.node_degree.cuda()
             loss = loss.cuda()
         
         self.optimizer.zero_grad()
@@ -697,8 +677,8 @@ class Trainer:
         # Prediction
         out_gnn = self.model(x = data.x,
                              edge_index = data.edge_index,
+                             edge_attr = data.edge_attr,
                              edge_weight = data.edge_weight,
-                             pos = data.pos, 
                              halo_info = data.halo_info,
                              mask_send = self.mask_send,
                              mask_recv = self.mask_recv,
@@ -707,7 +687,7 @@ class Trainer:
                              neighboring_procs = self.neighboring_procs,
                              SIZE = SIZE,
                              batch = data.batch)
-
+        
         # Accumulate loss
         target = data.x
 
@@ -747,22 +727,21 @@ class Trainer:
         
         if WITH_CUDA:
             data.x = data.x.cuda() 
-            #data.y = data.y.cuda()
+            data.y = data.y.cuda()
             data.edge_index = data.edge_index.cuda()
             data.edge_weight = data.edge_weight.cuda()
             data.edge_attr = data.edge_attr.cuda()
-            data.pos = data.pos.cuda()
-            data.batch = data.batch.cuda()
-            data.halo_info = data.halo_info.cuda()
+            data.batch = data.batch.cuda() if data.batch else None
+            #data.halo_info = data.halo_info.cuda()
             data.node_degree = data.node_degree.cuda()
             loss = loss.cuda()
-        
+                    
         self.optimizer.zero_grad()
         
         out_gnn = self.model(x = data.x,
                              edge_index = data.edge_index,
+                             edge_attr = data.edge_attr,
                              edge_weight = data.edge_weight,
-                             pos = data.pos, 
                              halo_info = data.halo_info,
                              mask_send = self.mask_send,
                              mask_recv = self.mask_recv,
@@ -894,13 +873,12 @@ class Trainer:
                 loss = torch.tensor([0.0])
                 if WITH_CUDA:
                     data.x = data.x.cuda() 
-                    #data.y = data.y.cuda()
+                    data.y = data.y.cuda()
                     data.edge_index = data.edge_index.cuda()
                     data.edge_weight = data.edge_weight.cuda()
                     data.edge_attr = data.edge_attr.cuda()
-                    data.pos = data.pos.cuda()
                     data.batch = data.batch.cuda() if data.batch else None
-                    data.halo_info = data.halo_info.cuda()
+                    #data.halo_info = data.halo_info.cuda()
                     data.node_degree = data.node_degree.cuda()
                     loss = loss.cuda()
 
@@ -924,8 +902,8 @@ class Trainer:
                 with record_function(f"[RANK {RANK}] FORWARD PASS"):
                     out_gnn = self.model(x = data.x,
                                          edge_index = data.edge_index,
+                                         edge_attr = data.edge_attr,
                                          edge_weight = data.edge_weight,
-                                         pos = data.pos, 
                                          halo_info = data.halo_info,
                                          mask_send = self.mask_send,
                                          mask_recv = self.mask_recv,
@@ -1208,7 +1186,7 @@ def train_profile(cfg: DictConfig) -> None:
             print("Directory already exists.")
     COMM.Barrier()
 
-    torch.save(prof.key_averages(), savepath + '/%s.tar' %(model.get_save_header()))
+    #torch.save(prof.key_averages(), savepath + '/%s.tar' %(model.get_save_header()))
 
     return 
 

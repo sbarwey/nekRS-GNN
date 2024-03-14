@@ -76,8 +76,8 @@ class DistributedGNN(torch.nn.Module):
             self,
             x: Tensor,
             edge_index: LongTensor,
+            edge_attr: Tensor,
             edge_weight: Tensor,
-            pos: Tensor,
             halo_info: Tensor,
             mask_send: list,
             mask_recv: list,
@@ -90,24 +90,13 @@ class DistributedGNN(torch.nn.Module):
         if batch is None:
             batch = edge_index.new_zeros(x.size(0))
 
-        # ~~~~ Compute edge features
-        x_send = x[edge_index[0,:],:]
-        x_recv = x[edge_index[1,:],:]
-        pos_send = pos[edge_index[0,:],:]
-        pos_recv = pos[edge_index[1,:],:]
-        e_1 = pos_send - pos_recv
-        e_2 = torch.norm(e_1, dim=1, p=2, keepdim=True)
-        e_3 = x_send - x_recv
-        e = torch.cat((e_1, e_2, e_3), dim=1)
-
         # ~~~~ Node encoder
         x = self.node_encoder(x)
 
         # ~~~~ Edge encoder
-        e = self.edge_encoder(e)
+        e = self.edge_encoder(edge_attr)
         
         # ~~~~ Processor
-
         for i in range(self.n_messagePassing_layers):
             x,_ = self.processor[i](x,
                                     e,
