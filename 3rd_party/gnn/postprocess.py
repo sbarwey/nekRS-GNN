@@ -263,7 +263,7 @@ if __name__ == "__main__":
         # plt.show(block=False)
 
 
-    if 1 == 1:
+    if 1 == 0:
         """
         Looking at graph stats -- number of nodes, edges, etc. 
         """
@@ -396,23 +396,25 @@ if __name__ == "__main__":
         # ~~~~ # ax.set_xlabel('Number of GPUs')
         # ~~~~ # plt.show(block=False)
 
-    if 1 == 0:
+    if 1 == 1:
         """
         Looking at profiler outputs 
         """
-        if 1 == 0: # data generation 
-            POLY_LIST = [1,3,5] # nekrs polynomial order  
+        if 1 == 1: # data generation 
+            profile_path = "./outputs/profiles/weak_scale/"
+            POLY_LIST = [3,5] # nekrs polynomial order  
             N_MP_LIST = [2,4,6,8] # number of message passing layers 
-            N_HC_LIST = [32] # number of hidden channels 
+            N_HC_LIST = [8,16,32] # number of hidden channels 
 
             # constants 
             seed = 12
             input_channels_node = 3
-            input_channels_edge = 7
+            input_channels_edge = 4
             output_channels = 3
             hidden_layers = 2 
 
-            SIZE_LIST = [1,2,4,8,16,32,64,128]
+            SIZE_LIST = [1,2,4,8,16,32,64]
+            #SIZE_LIST = [1,2,4,8,16,32,64,128]
             HALO_MODE_LIST = ['none', 'all_to_all']
             
             for poly in POLY_LIST:
@@ -429,10 +431,10 @@ if __name__ == "__main__":
                                     rank = k 
                                     # file_str = f"POLY_{poly}_RANK_{rank}_SIZE_{size}_input_channels_3_hidden_channels_{n_hc}_output_channels_3_nMessagePassingLayers_{n_mp}_halo_{halo}.tar"
                                     file_str = f"POLY_{poly}_RANK_{rank}_SIZE_{size}_SEED_{seed}_{input_channels_node}_{input_channels_edge}_{n_hc}_{output_channels}_{hidden_layers}_{n_mp}_{halo}.tar"
-
+                                    
                                     # load profile data 
                                     try: 
-                                        temp_prof = torch.load("./outputs/profiles/" + file_str)
+                                        temp_prof = torch.load(profile_path + file_str)
                                         #temp_prof = torch.load("./outputs/profiles_old/" + file_str)
                                         # print(temp_prof.table(sort_by="cpu_time_total", row_limit=10))
                                         key_list = [] 
@@ -463,9 +465,9 @@ if __name__ == "__main__":
                                 y_axis_min[j] = t_forwardPass[halo][j].min()
                             
                             temp_name = f"POLY_{poly}_SEED_{seed}_{input_channels_node}_{input_channels_edge}_{n_hc}_{output_channels}_{hidden_layers}_{n_mp}_{halo}"
-                            np.save(f"outputs/{temp_name}_mean.npy", y_axis_mean)
-                            np.save(f"outputs/{temp_name}_max.npy", y_axis_min)
-                            np.save(f"outputs/{temp_name}_min.npy", y_axis_max)
+                            np.save(profile_path + f"{temp_name}_mean.npy", y_axis_mean)
+                            np.save(profile_path + f"{temp_name}_max.npy", y_axis_min)
+                            np.save(profile_path + f"{temp_name}_min.npy", y_axis_max)
 
                         # # plot data 
                         # fig, ax = plt.subplots(figsize=(6,6))
