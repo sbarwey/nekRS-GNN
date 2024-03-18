@@ -540,11 +540,18 @@ class Trainer:
 
         # Load data 
         main_path = self.cfg.gnn_outputs_path
-        path_to_x = main_path + 'fld_u_time_10.0_rank_%d_size_%d' %(RANK,SIZE)
-        path_to_y = main_path + 'fld_u_time_10.0_rank_%d_size_%d' %(RANK,SIZE)
-        data_x = np.fromfile(path_to_x + ".bin", dtype=np.float64).reshape((-1,3))
+        try:
+            path_to_x = main_path + 'fld_u_time_10.0_rank_%d_size_%d' %(RANK,SIZE)
+            path_to_y = main_path + 'fld_u_time_10.0_rank_%d_size_%d' %(RANK,SIZE)
+            data_x = np.fromfile(path_to_x + ".bin", dtype=np.float64).reshape((-1,3))
+            data_y = np.fromfile(path_to_y + ".bin", dtype=np.float64).reshape((-1,3))
+        except FileNotFoundError:
+            path_to_x = main_path + 'fld_u_time_0.0_rank_%d_size_%d' %(RANK,SIZE)
+            path_to_y = main_path + 'fld_u_time_0.0_rank_%d_size_%d' %(RANK,SIZE)
+            data_x = np.fromfile(path_to_x + ".bin", dtype=np.float64).reshape((-1,3))
+            data_y = np.fromfile(path_to_y + ".bin", dtype=np.float64).reshape((-1,3))
+
         data_x = data_x.astype(NP_FLOAT_DTYPE)
-        data_y = np.fromfile(path_to_y + ".bin", dtype=np.float64).reshape((-1,3))
         data_y = data_y.astype(NP_FLOAT_DTYPE)
 
         # Retain only N_gll = Np*Ne elements
