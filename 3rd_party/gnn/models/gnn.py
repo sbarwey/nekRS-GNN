@@ -444,6 +444,34 @@ class DistributedMessagePassingLayer(torch.nn.Module):
                     n_recv = len(mask_recv[i])
                     input_tensor[mask_recv[i]] = buff_recv[i][:n_recv,:]
 
+            elif self.halo_swap_mode == 'send_recv':
+                # Fill send buffer
+                for i in neighboring_procs:
+                    n_send = len(mask_send[i])
+                    buff_send[i][:n_send,:] = input_tensor[mask_send[i]] 
+
+                # Perform sendrecv 
+                send_req = []
+                for dst in neighboring_procs:
+                    tmp = dist.isend(buff_send[dst], dst)
+                    send_req.append(tmp)
+                recv_req = []
+                for src in neighboring_procs:
+                    tmp = dist.irecv(buff_recv[src], src)
+                    recv_req.append(tmp)
+
+                for req in send_req:
+                    req.wait()
+                for req in recv_req:
+                    req.wait()
+                dist.barrier()
+
+                # Fill halo nodes
+                for i in neighboring_procs:
+                    n_recv = len(mask_recv[i])
+                    input_tensor[mask_recv[i]] = buff_recv[i][:n_recv,:]
+
+
             elif self.halo_swap_mode == 'none':
                 pass
             else:

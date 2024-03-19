@@ -391,10 +391,15 @@ class Trainer:
             dist.all_reduce(n_max, op=dist.ReduceOp.MAX)
             n_max = int(n_max)
 
-            # fill the buffers 
-            for i in range(SIZE): 
-                buff_send[i] = torch.empty([n_max, n_features], dtype=TORCH_FLOAT_DTYPE, device=DEVICE_ID) 
-                buff_recv[i] = torch.empty([n_max, n_features], dtype=TORCH_FLOAT_DTYPE, device=DEVICE_ID)
+            # fill the buffers -- make all buffer sizes the same (required for all_to_all) 
+            if self.cfg.halo_swap_mode == "all_to_all":
+                for i in range(SIZE): 
+                    buff_send[i] = torch.empty([n_max, n_features], dtype=TORCH_FLOAT_DTYPE, device=DEVICE_ID) 
+                    buff_recv[i] = torch.empty([n_max, n_features], dtype=TORCH_FLOAT_DTYPE, device=DEVICE_ID)
+            elif self.cfg.halo_swap_mode == "send_recv":
+                for i in self.neighboring_procs:
+                    buff_send[i] = torch.empty([int(n_nodes_to_exchange[i]), n_features], dtype=TORCH_FLOAT_DTYPE, device=DEVICE_ID) 
+                    buff_recv[i] = torch.empty([int(n_nodes_to_exchange[i]), n_features], dtype=TORCH_FLOAT_DTYPE, device=DEVICE_ID)
 
             #for i in self.neighboring_procs:
             #    buff_send[i] = torch.empty([len(self.mask_send[i]), n_features], dtype=torch.float32, device=DEVICE_ID) 
