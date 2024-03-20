@@ -129,7 +129,7 @@ if __name__ == "__main__":
         #ax.set_xlim([1,10])
         plt.show(block=False)
 
-    if 1 == 1: 
+    if 1 == 0: 
         """
         Looking at consistency QoIs -- data produced from train_step_verification in main.py  
         """
@@ -410,12 +410,12 @@ if __name__ == "__main__":
         # ~~~~ # ax.set_xlabel('Number of GPUs')
         # ~~~~ # plt.show(block=False)
 
-    if 1 == 0:
+    if 1 == 1:
         """
         Looking at profiler outputs 
         """
-        if 1 == 0: # data generation 
-            profile_path = "./outputs/profiles/weak_scale/"
+        if 1 == 1: # data generation 
+            profile_path = "./outputs/profiles/weak_scale_v2/"
             POLY_LIST = [3,5] # nekrs polynomial order  
             N_MP_LIST = [2,4,6,8] # number of message passing layers 
             N_HC_LIST = [8,16,32] # number of hidden channels 
@@ -434,13 +434,22 @@ if __name__ == "__main__":
             for poly in POLY_LIST:
                 for n_mp in N_MP_LIST:
                     for n_hc in N_HC_LIST:
-                        t_forwardPass = {}
+                        t_forwardPass_cuda = {}
+                        t_forwardPass_cpu = {}
+                        t_indexAdd_cuda = {}
+                        t_indexAdd_cpu = {}
                         for i in range(len(HALO_MODE_LIST)):
                             halo = HALO_MODE_LIST[i]
-                            t_forwardPass[halo] = []
+                            t_forwardPass_cuda[halo] = []
+                            t_forwardPass_cpu[halo] = []
+                            t_indexAdd_cuda[halo] = []
+                            t_indexAdd_cpu[halo] = []
                             for j in range(len(SIZE_LIST)):
                                 size = SIZE_LIST[j]
-                                t_forwardPass[halo].append(np.zeros(size))
+                                t_forwardPass_cuda[halo].append(np.zeros(size))
+                                t_forwardPass_cpu[halo].append(np.zeros(size))
+                                t_indexAdd_cuda[halo].append(np.zeros(size))
+                                t_indexAdd_cpu[halo].append(np.zeros(size))
                                 for k in range(size):
                                     rank = k 
                                     # file_str = f"POLY_{poly}_RANK_{rank}_SIZE_{size}_input_channels_3_hidden_channels_{n_hc}_output_channels_3_nMessagePassingLayers_{n_mp}_halo_{halo}.tar"
@@ -455,16 +464,29 @@ if __name__ == "__main__":
                                         for key_id in range(len(temp_prof)):
                                             key_list.append(temp_prof[key_id].key)
                                         idx_key = key_list.index(f'[RANK {rank}] FORWARD PASS') 
-                                        cuda_time = temp_prof[idx_key].cuda_time # in microseconds, averaged over many runs  
+                                        cuda_time = temp_prof[idx_key].cuda_time # in microseconds,averaged over runs  
+                                        cpu_time = temp_prof[idx_key].cpu_time # in microseconds  
 
-                                        t_forwardPass[halo][j][k] = cuda_time
+                                        if 'aten::index_add_' in key_list:
+                                            idx_key = key_list.index('aten::index_add_')
+                                            indexAdd_cuda_time = temp_prof[idx_key].cuda_time
+                                            indexAdd_cpu_time = temp_prof[idx_key].cpu_time
+                                        else:
+                                            indexAdd_cuda_time = 0.
+                                            indexAdd_cpu_time = 0.
 
                                     except FileNotFoundError:
                                         print(f"FileNotFound: {file_str}")
                                         cuda_time = 0
-                                        t_forwardPass[halo][j][k] = cuda_time
+                                        cpu_time = 0
+                                        indexAdd_cuda_time = 0
+                                        indexAdd_cpu_time = 0
 
-                                    print(f"[POLY {poly}, N_MP {n_mp}, N_HC {n_hc}, SIZE {size}, RANK {rank}] -- cuda_time = {cuda_time} us")
+                                    t_forwardPass_cuda[halo][j][k] = cuda_time
+                                    t_forwardPass_cpu[halo][j][k] = cpu_time
+                                    t_indexAdd_cuda[halo][j][k] = indexAdd_cuda_time
+                                    t_indexAdd_cpu[halo][j][k] = indexAdd_cpu_time
+                                    print(f"[POLY {poly}, N_MP {n_mp}, N_HC {n_hc}, SIZE {size}, RANK {rank}] -- cuda_time = {cuda_time} us, indexAdd_cuda_time = {indexAdd_cuda_time} us")
 
                         
                         # Write the data 
@@ -474,14 +496,60 @@ if __name__ == "__main__":
                             y_axis_max = np.zeros_like(x_axis)
                             y_axis_min = np.zeros_like(x_axis)
                             for j in range(len(SIZE_LIST)):
-                                y_axis_mean[j] = t_forwardPass[halo][j].mean()
-                                y_axis_max[j] = t_forwardPass[halo][j].max()
-                                y_axis_min[j] = t_forwardPass[halo][j].min()
+                                y_axis_mean[j] = t_forwardPass_cuda[halo][j].mean()
+                                y_axis_max[j] = t_forwardPass_cuda[halo][j].max()
+                                y_axis_min[j] = t_forwardPass_cuda[halo][j].min()
                             
                             temp_name = f"POLY_{poly}_SEED_{seed}_{input_channels_node}_{input_channels_edge}_{n_hc}_{output_channels}_{hidden_layers}_{n_mp}_{halo}"
-                            np.save(profile_path + f"{temp_name}_mean.npy", y_axis_mean)
-                            np.save(profile_path + f"{temp_name}_max.npy", y_axis_min)
-                            np.save(profile_path + f"{temp_name}_min.npy", y_axis_max)
+                            np.save(profile_path + f"{temp_name}_mean_cuda.npy", y_axis_mean)
+                            np.save(profile_path + f"{temp_name}_max_cuda.npy", y_axis_min)
+                            np.save(profile_path + f"{temp_name}_min_cuda.npy", y_axis_max)
+
+                        for halo in HALO_MODE_LIST:
+                            x_axis = np.array(SIZE_LIST)
+                            y_axis_mean = np.zeros_like(x_axis)
+                            y_axis_max = np.zeros_like(x_axis)
+                            y_axis_min = np.zeros_like(x_axis)
+                            for j in range(len(SIZE_LIST)):
+                                y_axis_mean[j] = t_forwardPass_cpu[halo][j].mean()
+                                y_axis_max[j] = t_forwardPass_cpu[halo][j].max()
+                                y_axis_min[j] = t_forwardPass_cpu[halo][j].min()
+                            
+                            temp_name = f"POLY_{poly}_SEED_{seed}_{input_channels_node}_{input_channels_edge}_{n_hc}_{output_channels}_{hidden_layers}_{n_mp}_{halo}"
+                            np.save(profile_path + f"{temp_name}_mean_cpu.npy", y_axis_mean)
+                            np.save(profile_path + f"{temp_name}_max_cpu.npy", y_axis_min)
+                            np.save(profile_path + f"{temp_name}_min_cpu.npy", y_axis_max)
+
+                        # Write the data -- indexAdd
+                        for halo in HALO_MODE_LIST:
+                            x_axis = np.array(SIZE_LIST)
+                            y_axis_mean = np.zeros_like(x_axis)
+                            y_axis_max = np.zeros_like(x_axis)
+                            y_axis_min = np.zeros_like(x_axis)
+                            for j in range(len(SIZE_LIST)):
+                                y_axis_mean[j] = t_indexAdd_cuda[halo][j].mean()
+                                y_axis_max[j] = t_indexAdd_cuda[halo][j].max()
+                                y_axis_min[j] = t_indexAdd_cuda[halo][j].min()
+                            
+                            temp_name = f"POLY_{poly}_SEED_{seed}_{input_channels_node}_{input_channels_edge}_{n_hc}_{output_channels}_{hidden_layers}_{n_mp}_{halo}"
+                            np.save(profile_path + f"{temp_name}_mean_indexAdd_cuda.npy", y_axis_mean)
+                            np.save(profile_path + f"{temp_name}_max_indexAdd_cuda.npy", y_axis_min)
+                            np.save(profile_path + f"{temp_name}_min_indexAdd_cuda.npy", y_axis_max)
+
+                        for halo in HALO_MODE_LIST:
+                            x_axis = np.array(SIZE_LIST)
+                            y_axis_mean = np.zeros_like(x_axis)
+                            y_axis_max = np.zeros_like(x_axis)
+                            y_axis_min = np.zeros_like(x_axis)
+                            for j in range(len(SIZE_LIST)):
+                                y_axis_mean[j] = t_indexAdd_cpu[halo][j].mean()
+                                y_axis_max[j] = t_indexAdd_cpu[halo][j].max()
+                                y_axis_min[j] = t_indexAdd_cpu[halo][j].min()
+                            
+                            temp_name = f"POLY_{poly}_SEED_{seed}_{input_channels_node}_{input_channels_edge}_{n_hc}_{output_channels}_{hidden_layers}_{n_mp}_{halo}"
+                            np.save(profile_path + f"{temp_name}_mean_indexAdd_cpu.npy", y_axis_mean)
+                            np.save(profile_path + f"{temp_name}_max_indexAdd_cpu.npy", y_axis_min)
+                            np.save(profile_path + f"{temp_name}_min_indexAdd_cpu.npy", y_axis_max)
 
                         # # plot data 
                         # fig, ax = plt.subplots(figsize=(6,6))
@@ -640,7 +708,7 @@ if __name__ == "__main__":
             # plt.show(block=False)
 
 
-    if 1 == 1:
+    if 1 == 0:
         """
         Test profiler output 
         """

@@ -967,8 +967,8 @@ class Trainer:
 
         for bidx, data in enumerate(train_loader):
             batch_size = len(data)
-            loss = self.train_step_verification(data)
-            #loss = self.train_step(data)
+            #loss = self.train_step_verification(data)
+            loss = self.train_step(data)
             running_loss += loss.item()
             count += 1 # accumulate current batch count
             self.training_iter += 1 # accumulate total training iteration
