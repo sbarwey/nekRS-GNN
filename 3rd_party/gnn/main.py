@@ -672,13 +672,9 @@ class Trainer:
         self.optimizer.zero_grad()
 
         # re-allocate send buffer 
-        if self.cfg.halo_swap_mode == 'all_to_all':
-            #buffer_send = self.init_send_buffer(self.n_buffer_rows, self.cfg.hidden_channels, DEVICE_ID)
-            #buffer_recv = self.buffer_recv
-
+        if self.cfg.halo_swap_mode != 'none':
             for i in range(SIZE):
                 self.buffer_send[i] = torch.zeros_like(self.buffer_send[i])
-
             for i in range(SIZE):
                 self.buffer_recv[i] = torch.zeros_like(self.buffer_recv[i])
 
@@ -897,13 +893,9 @@ class Trainer:
                 self.optimizer.zero_grad()
 
                 # re-allocate send buffer 
-                if self.cfg.halo_swap_mode == 'all_to_all':
-                    #buffer_send = self.init_send_buffer(self.n_buffer_rows, self.cfg.hidden_channels, DEVICE_ID)
-                    #buffer_recv = self.buffer_recv
-
+                if self.cfg.halo_swap_mode != 'none':
                     for i in range(SIZE):
                         self.buffer_send[i] = torch.zeros_like(self.buffer_send[i])
-
                     for i in range(SIZE):
                         self.buffer_recv[i] = torch.zeros_like(self.buffer_recv[i])
 
