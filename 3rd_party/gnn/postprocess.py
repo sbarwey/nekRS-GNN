@@ -414,8 +414,8 @@ if __name__ == "__main__":
         """
         Looking at profiler outputs 
         """
-        if 1 == 0: # data generation 
-            profile_path = "./outputs/profiles/weak_scale_v2/"
+        if 1 == 1: # data generation 
+            profile_path = "./outputs/profiles/weak_scale_v2_updated/"
             POLY_LIST = [3,5] # nekrs polynomial order  
             N_MP_LIST = [2,4,6,8] # number of message passing layers 
             N_HC_LIST = [8,16,32] # number of hidden channels 
@@ -429,8 +429,8 @@ if __name__ == "__main__":
 
             SIZE_LIST = [1,2,4,8,16,32,64]
             #SIZE_LIST = [1,2,4,8,16,32,64,128]
-            HALO_MODE_LIST = ['none', 'all_to_all']
-            
+            HALO_MODE_LIST = ['none', 'all_to_all', 'send_recv']
+
             for poly in POLY_LIST:
                 for n_mp in N_MP_LIST:
                     for n_hc in N_HC_LIST:
@@ -552,7 +552,7 @@ if __name__ == "__main__":
                             np.save(profile_path + f"{temp_name}_min_indexAdd_cpu.npy", y_axis_max)
 
         # Scaling plots 
-        if 1 == 1:
+        if 1 == 0:
             profile_path = "./outputs/profiles/weak_scale_v2/"
             HALO_MODE_LIST = ['none', 'all_to_all']
             seed = 12
