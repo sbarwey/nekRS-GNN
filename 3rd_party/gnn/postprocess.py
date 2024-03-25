@@ -414,7 +414,7 @@ if __name__ == "__main__":
         """
         Looking at profiler outputs 
         """
-        if 1 == 1: # data generation 
+        if 1 == 0: # data generation 
             profile_path = "./outputs/profiles/weak_scale_v2/"
             POLY_LIST = [3,5] # nekrs polynomial order  
             N_MP_LIST = [2,4,6,8] # number of message passing layers 
@@ -551,54 +551,9 @@ if __name__ == "__main__":
                             np.save(profile_path + f"{temp_name}_max_indexAdd_cpu.npy", y_axis_min)
                             np.save(profile_path + f"{temp_name}_min_indexAdd_cpu.npy", y_axis_max)
 
-                        # # plot data 
-                        # fig, ax = plt.subplots(figsize=(6,6))
-                        # lw = 2 
-                        # 
-                        # halo = 'none'
-                        # x_axis = np.array(SIZE_LIST)
-                        # y_axis_mean = np.zeros_like(x_axis)
-                        # y_axis_max = np.zeros_like(x_axis)
-                        # y_axis_min = np.zeros_like(x_axis)
-                        # for j in range(len(SIZE_LIST)):
-                        #     y_axis_mean[j] = t_forwardPass[halo][j].mean()
-                        #     y_axis_max[j] = t_forwardPass[halo][j].max()
-                        #     y_axis_min[j] = t_forwardPass[halo][j].min()
-                        # np.save(f"outputs/p_{poly}_{halo}_mean.npy", y_axis_mean)
-                        # np.save(f"outputs/p_{poly}_{halo}_max.npy", y_axis_min)
-                        # np.save(f"outputs/p_{poly}_{halo}_min.npy", y_axis_max)
-
-                        # ax.plot(x_axis, y_axis_mean, color='black', marker='o', lw=lw, label='no halo')
-                        # ax.fill_between(x_axis, y_axis_min, y_axis_max, color='black', lw=1, alpha=0.2)
-
-                        # halo = 'all_to_all'
-                        # x_axis = np.array(SIZE_LIST)
-                        # y_axis_mean = np.zeros_like(x_axis)
-                        # y_axis_max = np.zeros_like(x_axis)
-                        # y_axis_min = np.zeros_like(x_axis)
-                        # for j in range(len(SIZE_LIST)):
-                        #     y_axis_mean[j] = t_forwardPass[halo][j].mean()
-                        #     y_axis_max[j] = t_forwardPass[halo][j].max()
-                        #     y_axis_min[j] = t_forwardPass[halo][j].min()
-                        # 
-                        # #np.save(f"outputs/p_{poly}_{halo}_mean.npy", y_axis_mean)
-                        # #np.save(f"outputs/p_{poly}_{halo}_max.npy", y_axis_min)
-                        # #np.save(f"outputs/p_{poly}_{halo}_min.npy", y_axis_max)
-
-                        # ax.plot(x_axis, y_axis_mean, color='blue', marker='o', lw=lw, label='all_to_all')
-                        # ax.fill_between(x_axis, y_axis_min, y_axis_max, color='blue', lw=1, alpha=0.2)
-
-                        # ax.set_ylabel('Time [us]')
-                        # ax.set_xlabel('Number of GPUs')
-                        # ax.set_yscale('log')
-                        # ax.set_xscale('log')
-                        # ax.set_title('DistGNN Forward Pass (P = %d)' %(poly))
-                        # ax.legend()
-                        # plt.show(block=False)
-
         # Scaling plots 
-        if 1 == 0:
-            profile_path = "./outputs/profiles/weak_scale/"
+        if 1 == 1:
+            profile_path = "./outputs/profiles/weak_scale_v2/"
             HALO_MODE_LIST = ['none', 'all_to_all']
             seed = 12
             input_channels_node = 3
@@ -610,9 +565,22 @@ if __name__ == "__main__":
             # ~~~~ the effect of n_mp layers, for fixed poly and n_hc 
             # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
             poly = 5
-            n_hc = 32
+            n_hc = 16
             N_MP_LIST = [2,4,6,8]
             #N_MP_LIST = [2,6]
+            data_str = 'cuda'
+            #data_str = 'cpu'
+            #data_str = 'indexAdd_cuda'
+            #data_str = 'indexAdd_cpu'
+
+            if poly==3:
+                #n_nodes_local = 116400
+                #n_nodes_local = np.array([110592, 117504, 117504, 117504, 128304, 128304, 128304]) # includes halo 
+                n_nodes_local = np.array([110592, 112896, 112896, 112896, 116400, 116400, 116400]) # no halo nodes
+            if poly==5:
+                #n_nodes_local = 528080
+                #n_nodes_local = np.array([512000, 531200, 531200, 531200, 560720, 560720, 560720]) # includes halo 
+                n_nodes_local = np.array([512000, 518400, 518400, 518400, 528080, 528080, 528080]) # no halo nodes 
 
             norm = Normalize(vmin=np.min(N_MP_LIST), vmax=np.max(N_MP_LIST))
 
@@ -627,35 +595,52 @@ if __name__ == "__main__":
             for n_mp in N_MP_LIST:
                 halo = 'all_to_all'
                 temp_name = f"POLY_{poly}_SEED_{seed}_{input_channels_node}_{input_channels_edge}_{n_hc}_{output_channels}_{hidden_layers}_{n_mp}_{halo}"
-                data_all_mean.append(np.load(profile_path + f"{temp_name}_mean.npy"))
-                data_all_max.append(np.load(profile_path + f"{temp_name}_max.npy"))
-                data_all_min.append(np.load(profile_path + f"{temp_name}_min.npy"))
+                data_all_mean.append(np.load(profile_path + f"{temp_name}_mean_{data_str}.npy"))
+                data_all_max.append(np.load(profile_path + f"{temp_name}_max_{data_str}.npy"))
+                data_all_min.append(np.load(profile_path + f"{temp_name}_min_{data_str}.npy"))
 
                 halo = 'none'
                 temp_name = f"POLY_{poly}_SEED_{seed}_{input_channels_node}_{input_channels_edge}_{n_hc}_{output_channels}_{hidden_layers}_{n_mp}_{halo}"
-                data_none_mean.append(np.load(profile_path + f"{temp_name}_mean.npy"))
-                data_none_max.append(np.load(profile_path + f"{temp_name}_max.npy"))
-                data_none_min.append(np.load(profile_path + f"{temp_name}_min.npy"))
+                data_none_mean.append(np.load(profile_path + f"{temp_name}_mean_{data_str}.npy"))
+                data_none_max.append(np.load(profile_path + f"{temp_name}_max_{data_str}.npy"))
+                data_none_min.append(np.load(profile_path + f"{temp_name}_min_{data_str}.npy"))
 
             #x_axis = np.array([1,2,4,8,16,32,64,128])
             x_axis = np.array([1,2,4,8,16,32,64])
 
+            # Get total throughput: n_nodes / time 
+            eff_all = [] 
+            for i in range(len(N_MP_LIST)):
+                t_fp = data_all_mean[i]
+                total_nodes = (n_nodes_local*x_axis)
+                total_throughput = total_nodes/t_fp
+                serial_throughput = total_throughput[0]
+                eff = total_throughput/(serial_throughput * x_axis)
+                eff_all.append(eff)
+
             lw = 1.5 
             ms = 10
-
-            fig, ax = plt.subplots(figsize=(5,6))
+            fig, ax = plt.subplots(1,2,figsize=(10,6), sharex=True)
             for i in range(len(N_MP_LIST)):
                 color = cm.viridis(norm(N_MP_LIST[i]))
-                ax.plot(x_axis, data_none_mean[i], color=color, lw=lw, marker='o', ms=ms, mec='black')
-                ax.plot(x_axis, data_all_mean[i], color=color, lw=lw, marker='s', ms=ms, mec='black', ls='--')
+                ax[0].plot(x_axis, data_none_mean[i], color=color, lw=lw, marker='o', ms=ms, mec='black')
+                ax[0].plot(x_axis, data_all_mean[i], color=color, lw=lw, marker='s', ms=ms, mec='black', ls='--')
+                ax[1].plot(x_axis, eff_all[i]*100, color=color, lw=lw, marker='s', ms=ms, mec='black')
 
-            ax.set_xscale('log')
-            ax.set_yscale('log')
-            ax.set_xlabel('nGPU')
-            ax.set_ylabel('Time [us]')
-            ax.set_title(f"poly={poly}, hc={n_hc}")
-            ax.set_ylim([1e3, 1e6])
+            ax[0].set_xscale('log')
+            ax[0].set_yscale('log')
+            ax[0].set_xlabel('nGPU')
+            ax[0].set_ylabel('CUDA Time [us]')
+            ax[0].set_title(f"poly={poly}, hc={n_hc}")
+            ax[0].set_ylim([1e3, 1e6])
             #ax.legend(fancybox=False, framealpha=1)
+
+            ax[1].set_xscale('log')
+            ax[1].set_xlabel('nGPU')
+            ax[1].set_ylabel('Throughput Efficiency [%]')
+            ax[1].set_title(f"poly={poly}, hc={n_hc}")
+            ax[1].set_ylim([0., 105])
+
             # # left, bottom, width, height
             # cax = fig.add_axes([0.11, 0.21, 0.35, 0.03])  # Position and size of the color bar
             # sm = cm.ScalarMappable(cmap=cm.viridis, norm=norm)
