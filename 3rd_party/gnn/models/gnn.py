@@ -10,7 +10,7 @@ from torch_geometric.nn.conv import MessagePassing
 from torch_geometric.typing import Adj, OptTensor, PairTensor
 from pooling import TopKPooling_Mod, avg_pool_mod, avg_pool_mod_no_x
 import torch.distributed as dist
-import torch.distributed.nn as distnn
+import torch.distributed.nn_mod as distnn
 
 class DistributedGNN(torch.nn.Module):
     def __init__(self,
@@ -451,20 +451,22 @@ class DistributedMessagePassingLayer(torch.nn.Module):
                     buff_send[i][:n_send,:] = input_tensor[mask_send[i]] 
 
                 # Perform sendrecv 
-                send_req = []
-                for dst in neighboring_procs:
-                    tmp = dist.isend(buff_send[dst], dst)
-                    send_req.append(tmp)
-                recv_req = []
-                for src in neighboring_procs:
-                    tmp = dist.irecv(buff_recv[src], src)
-                    recv_req.append(tmp)
+                distnn.send_recv(buff_recv, buff_send, neighboring_procs)
 
-                for req in send_req:
-                    req.wait()
-                for req in recv_req:
-                    req.wait()
-                dist.barrier()
+                # send_req = []
+                # for dst in neighboring_procs:
+                #     tmp = dist.isend(buff_send[dst], dst)
+                #     send_req.append(tmp)
+                # recv_req = []
+                # for src in neighboring_procs:
+                #     tmp = dist.irecv(buff_recv[src], src)
+                #     recv_req.append(tmp)
+
+                # for req in send_req:
+                #     req.wait()
+                # for req in recv_req:
+                #     req.wait()
+                # dist.barrier()
 
                 # Fill halo nodes
                 for i in neighboring_procs:
