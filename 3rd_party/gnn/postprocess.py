@@ -4,7 +4,6 @@ from matplotlib.colors import Normalize, LogNorm
 import matplotlib.cm as cm
 import os 
 
-
 plt.rcParams.update({'font.size': 22})
 
 import torch
@@ -76,16 +75,16 @@ if __name__ == "__main__":
         plt.show(block=False)
 
 
-    if 1 == 0:
+    if 1 == 1:
         """
         Looking at consistency in training -- loss versus iter. 
         """
         POLY = 1
-        SIZE_LIST = [1,2,4,8]
+        #SIZE_LIST = [1,2,4,8]
+        SIZE_LIST = [1,8]
         COLOR_LIST = ['tab:blue', 'tab:orange', 'tab:red', 'tab:green']
-        HALO_LIST = ['all_to_all', 'none']
+        HALO_LIST = ['none', 'all_to_all', 'send_recv']
         #HALO_LIST = ['none']
-
 
         losses = [] 
         fig, ax = plt.subplots(figsize=(12,6))
@@ -93,40 +92,52 @@ if __name__ == "__main__":
             for j in range(len(HALO_LIST)):
                 size = SIZE_LIST[i]
                 halo = HALO_LIST[j]
+                if (size == 1) and (halo != 'none'):
+                    continue 
 
-                # old gnn 
-                mp = 4 
-                model_path_1 = f"./saved_models/old_gnn/real_grad/POLY_{POLY}_RANK_0_SIZE_{size}_SEED_12_input_channels_3_hidden_channels_32_output_channels_3_nMessagePassingLayers_{mp}_halo_{halo}.tar"
-                model_path_2 = f"./saved_models/old_gnn/hardcode_grad/POLY_{POLY}_RANK_0_SIZE_{size}_SEED_12_input_channels_3_hidden_channels_32_output_channels_3_nMessagePassingLayers_{mp}_halo_{halo}.tar"
+                # # old gnn 
+                # mp = 4 
+                # model_path_1 = f"./saved_models/old_gnn/real_grad/POLY_{POLY}_RANK_0_SIZE_{size}_SEED_12_input_channels_3_hidden_channels_32_output_channels_3_nMessagePassingLayers_{mp}_halo_{halo}.tar"
+                # model_path_2 = f"./saved_models/old_gnn/hardcode_grad/POLY_{POLY}_RANK_0_SIZE_{size}_SEED_12_input_channels_3_hidden_channels_32_output_channels_3_nMessagePassingLayers_{mp}_halo_{halo}.tar"
 
-                # # new gnn 
-                # mp = 4
-                # model_path_1 = f"./saved_models/new_gnn/real_grad/POLY_{POLY}_RANK_0_SIZE_{size}_SEED_12_3_7_32_3_2_{mp}_{halo}.tar"
-                # model_path_2 = f"./saved_models/new_gnn/hardcode_grad/POLY_{POLY}_RANK_0_SIZE_{size}_SEED_12_3_7_32_3_2_{mp}_{halo}.tar"
+                # new gnn 
+                mp = 4
+                #model_path_1 = f"./saved_models/new_gnn/real_grad/POLY_{POLY}_RANK_0_SIZE_{size}_SEED_12_3_7_32_3_2_{mp}_{halo}.tar"
+                model_path_1 = f"./saved_models/POLY_{POLY}_RANK_0_SIZE_{size}_SEED_12_3_4_32_3_2_{mp}_{halo}.tar"
+                #model_path_2 = f"./saved_models/new_gnn/hardcode_grad/POLY_{POLY}_RANK_0_SIZE_{size}_SEED_12_3_7_32_3_2_{mp}_{halo}.tar"
 
                 a_1 = torch.load(model_path_1)
                 loss_1 = a_1['loss_hist_train']
 
-                a_2 = torch.load(model_path_2)
-                loss_2 = a_2['loss_hist_train']
+                #a_2 = torch.load(model_path_2)
+                #loss_2 = a_2['loss_hist_train']
 
                 losses.append(loss_1)
 
                 if halo == 'none':
                     marker='o'
-                else:
+                    ls='-'
+                elif halo == 'all_to_all':
                     marker='s'
+                    ls='--'
+                else:
+                    marker='^'
+                    ls='--'
 
                 color = COLOR_LIST[i]
                 ax.plot(np.arange(len(loss_1))+1, loss_1, 
-                        marker=marker, color=color, ls='-', mew=1.5, lw=1.5, ms=14, fillstyle='none',
+                        marker=marker, color=color, ls=ls, mew=1., lw=1., ms=14, fillstyle='none',
                         label=f"{halo} -- {size} ranks")
                 #ax.plot(loss_2, marker='s', color=color, ls=ls, lw=1, ms=15, fillstyle='none')
 
         ax.set_xlabel('Iterations')
         ax.set_ylabel('Loss')
+        ax.set_yscale('log')
         #ax.legend(fancybox=False, framealpha=1)
         #ax.set_xlim([1,10])
+
+        
+
         plt.show(block=False)
 
     if 1 == 0: 
@@ -410,11 +421,11 @@ if __name__ == "__main__":
         # ~~~~ # ax.set_xlabel('Number of GPUs')
         # ~~~~ # plt.show(block=False)
 
-    if 1 == 1:
+    if 1 == 0:
         """
         Looking at profiler outputs 
         """
-        if 1 == 1: # data generation 
+        if 1 == 0: # data generation 
             profile_path = "./outputs/profiles/weak_scale_v2_updated/"
             POLY_LIST = [3,5] # nekrs polynomial order  
             N_MP_LIST = [2,4,6,8] # number of message passing layers 
@@ -552,9 +563,9 @@ if __name__ == "__main__":
                             np.save(profile_path + f"{temp_name}_min_indexAdd_cpu.npy", y_axis_max)
 
         # Scaling plots 
-        if 1 == 0:
-            profile_path = "./outputs/profiles/weak_scale_v2/"
-            HALO_MODE_LIST = ['none', 'all_to_all']
+        if 1 == 1:
+            profile_path = "./outputs/profiles/weak_scale_v2_updated/"
+            HALO_MODE_LIST = ['none', 'all_to_all', 'send_recv']
             seed = 12
             input_channels_node = 3
             input_channels_edge = 4
@@ -565,7 +576,7 @@ if __name__ == "__main__":
             # ~~~~ the effect of n_mp layers, for fixed poly and n_hc 
             # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
             poly = 5
-            n_hc = 16
+            n_hc = 8
             N_MP_LIST = [2,4,6,8]
             #N_MP_LIST = [2,6]
             data_str = 'cuda'
@@ -592,6 +603,10 @@ if __name__ == "__main__":
             data_none_max = []
             data_none_min = []
 
+            data_sr_mean = []
+            data_sr_max = []
+            data_sr_min = []
+
             for n_mp in N_MP_LIST:
                 halo = 'all_to_all'
                 temp_name = f"POLY_{poly}_SEED_{seed}_{input_channels_node}_{input_channels_edge}_{n_hc}_{output_channels}_{hidden_layers}_{n_mp}_{halo}"
@@ -604,6 +619,12 @@ if __name__ == "__main__":
                 data_none_mean.append(np.load(profile_path + f"{temp_name}_mean_{data_str}.npy"))
                 data_none_max.append(np.load(profile_path + f"{temp_name}_max_{data_str}.npy"))
                 data_none_min.append(np.load(profile_path + f"{temp_name}_min_{data_str}.npy"))
+
+                halo = 'send_recv'
+                temp_name = f"POLY_{poly}_SEED_{seed}_{input_channels_node}_{input_channels_edge}_{n_hc}_{output_channels}_{hidden_layers}_{n_mp}_{halo}"
+                data_sr_mean.append(np.load(profile_path + f"{temp_name}_mean_{data_str}.npy"))
+                data_sr_max.append(np.load(profile_path + f"{temp_name}_max_{data_str}.npy"))
+                data_sr_min.append(np.load(profile_path + f"{temp_name}_min_{data_str}.npy"))
 
             #x_axis = np.array([1,2,4,8,16,32,64,128])
             x_axis = np.array([1,2,4,8,16,32,64])
@@ -618,22 +639,33 @@ if __name__ == "__main__":
                 eff = total_throughput/(serial_throughput * x_axis)
                 eff_all.append(eff)
 
+            eff_sr = [] 
+            for i in range(len(N_MP_LIST)):
+                t_fp = data_sr_mean[i]
+                total_nodes = (n_nodes_local*x_axis)
+                total_throughput = total_nodes/t_fp
+                serial_throughput = total_throughput[0]
+                eff = total_throughput/(serial_throughput * x_axis)
+                eff_sr.append(eff)
+
             lw = 1.5 
-            ms = 10
+            ms = 14
             fig, ax = plt.subplots(1,2,figsize=(10,6), sharex=True)
             for i in range(len(N_MP_LIST)):
                 color = cm.viridis(norm(N_MP_LIST[i]))
-                ax[0].plot(x_axis, data_none_mean[i], color=color, lw=lw, marker='o', ms=ms, mec='black')
-                ax[0].plot(x_axis, data_all_mean[i], color=color, lw=lw, marker='s', ms=ms, mec='black', ls='--')
-                ax[1].plot(x_axis, eff_all[i]*100, color=color, lw=lw, marker='s', ms=ms, mec='black')
+                ax[0].plot(x_axis[:-1], data_none_mean[i][:-1], color=color, lw=lw, marker='o', ms=ms, mew=1.5, fillstyle='none', mec=color, label='none')
+                ax[0].plot(x_axis[:-1], data_all_mean[i][:-1],  color=color, lw=lw, marker='s', ms=ms, mew=1.5, fillstyle='none', mec=color, ls='--', label='all_to_all')
+                ax[0].plot(x_axis[:-1], data_sr_mean[i][:-1],   color=color, lw=lw, marker='^', ms=ms, mew=1.5, fillstyle='none', mec=color, ls='-.', label='send_recv')
+                ax[1].plot(x_axis, eff_all[i]*100,    color=color, lw=lw, marker='s', ms=ms, mew=1.5, fillstyle='none', mec=color, ls='--')
+                ax[1].plot(x_axis, eff_sr[i]*100,     color=color, lw=lw, marker='^', ms=ms, mew=1.5, fillstyle='none', mec=color, ls='-.')
 
             ax[0].set_xscale('log')
             ax[0].set_yscale('log')
             ax[0].set_xlabel('nGPU')
-            ax[0].set_ylabel('CUDA Time [us]')
+            ax[0].set_ylabel(f'{data_str} time [us]')
             ax[0].set_title(f"poly={poly}, hc={n_hc}")
             ax[0].set_ylim([1e3, 1e6])
-            #ax.legend(fancybox=False, framealpha=1)
+            #ax[0].legend(fancybox=False, framealpha=1)
 
             ax[1].set_xscale('log')
             ax[1].set_xlabel('nGPU')

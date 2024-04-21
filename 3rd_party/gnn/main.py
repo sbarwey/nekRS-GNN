@@ -23,7 +23,7 @@ import torch.distributions as tdist
 from torch.profiler import profile, record_function, ProfilerActivity
 
 import torch.distributed as dist
-import torch.distributed.nn as distnn
+import torch.distributed.nn_mod as distnn
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
