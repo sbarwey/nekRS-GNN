@@ -131,14 +131,21 @@ def metric_average(val: Tensor):
         return val / SIZE
     return val
 
+def metric_min(val: Tensor):
+    if (WITH_DDP):
+        dist.all_reduce(val, op=dist.ReduceOp.MIN)
+    return val
+
+def metric_max(val: Tensor):
+    if (WITH_DDP):
+        dist.all_reduce(val, op=dist.ReduceOp.MAX)
+    return val
 
 def trace_handler(p):
     output = p.key_averages().table(sort_by="cpu_time_total", row_limit=20)
     #print(output)
     print(temp_test)
     #p.export_chrome_trace("/tmp/trace_" + str(p.step_num) + ".json")
-
-
 
 class Trainer:
     def __init__(self, cfg: DictConfig, scaler: Optional[GradScaler] = None):
@@ -241,6 +248,14 @@ class Trainer:
                 log.info(sepstr)
                 log.info(astr)
                 log.info(sepstr)
+
+        # ~~~~ Setup train_step timers 
+        self.timer_step = 0
+        self.timer_step_max = self.cfg.epochs
+        self.timers = self.setup_timers(self.timer_step_max)
+        self.timers_max = self.setup_timers(self.timer_step_max)
+        self.timers_min = self.setup_timers(self.timer_step_max)
+        self.timers_avg = self.setup_timers(self.timer_step_max)
 
     def build_model(self) -> nn.Module:
         if RANK == 0:
@@ -656,8 +671,31 @@ class Trainer:
             }
         }
 
+    def setup_timers(self, n_record: int) -> dict:
+        timers = {}
+        timers['forwardPass'] = np.zeros(n_record)
+        timers['backwardPass'] = np.zeros(n_record)
+        timers['loss'] = np.zeros(n_record)
+        timers['optimizerStep'] = np.zeros(n_record)
+        timers['dataTransfer'] = np.zeros(n_record)
+        timers['bufferInit'] = np.zeros(n_record)
+        return timers
+
+    def update_timers(self):
+        keys = self.timers.keys()
+        i = self.timer_step
+        for key in keys:
+            self.timers_avg[key][i] = metric_average(torch.tensor( self.timers[key][i] )).item()
+            self.timers_min[key][i] = metric_min(torch.tensor( self.timers[key][i] )).item()
+            self.timers_max[key][i] = metric_max(torch.tensor( self.timers[key][i] )).item()
+
+            if RANK == 0:
+                log.info(f"t_{key} [min,max,avg] = [{self.timers_min[key][i]},{self.timers_max[key][i]},{self.timers_avg[key][i]}]") 
+        return
+
     def train_step(self, data: DataBatch) -> Tensor:
         loss = torch.tensor([0.0])
+        self.timers['dataTransfer'][self.timer_step] = time.time()
         if WITH_CUDA:
             data.x = data.x.cuda() 
             data.y = data.y.cuda()
@@ -668,21 +706,24 @@ class Trainer:
             data.halo_info = data.halo_info.cuda()
             data.node_degree = data.node_degree.cuda()
             loss = loss.cuda()
+        self.timers['dataTransfer'][self.timer_step] = time.time() - self.timers['dataTransfer'][self.timer_step]
         
         self.optimizer.zero_grad()
 
         # re-allocate send buffer 
+        self.timers['bufferInit'][self.timer_step] = time.time()
         if self.cfg.halo_swap_mode != 'none':
             for i in range(SIZE):
                 self.buffer_send[i] = torch.zeros_like(self.buffer_send[i])
             for i in range(SIZE):
                 self.buffer_recv[i] = torch.zeros_like(self.buffer_recv[i])
-
         else:
             buffer_send = None
             buffer_recv = None
+        self.timers['bufferInit'][self.timer_step] = time.time() - self.timers['bufferInit'][self.timer_step]
         
         # Prediction
+        self.timers['forwardPass'][self.timer_step] = time.time()
         out_gnn = self.model(x = data.x,
                              edge_index = data.edge_index,
                              edge_attr = data.edge_attr,
@@ -695,13 +736,12 @@ class Trainer:
                              neighboring_procs = self.neighboring_procs,
                              SIZE = SIZE,
                              batch = data.batch)
-        
+        self.timers['forwardPass'][self.timer_step] = time.time() - self.timers['forwardPass'][self.timer_step]
+
         # Accumulate loss
+        self.timers['loss'][self.timer_step] = time.time()
         target = data.x
-
-        # Toy loss: evaluate at all of the nodes 
         n_nodes_local = data.n_nodes_local
-
         if SIZE == 1:
             loss = self.loss_fn(out_gnn[:n_nodes_local], target[:n_nodes_local])
             effective_nodes = n_nodes_local 
@@ -716,8 +756,11 @@ class Trainer:
             effective_nodes = distnn.all_reduce(effective_nodes_local)
             sum_squared_errors = distnn.all_reduce(sum_squared_errors_local)
             loss = (1.0/(effective_nodes*n_output_features)) * sum_squared_errors
+        self.timers['loss'][self.timer_step] = time.time() - self.timers['loss'][self.timer_step]
 
+        self.timers['backwardPass'][self.timer_step] = time.time()
         loss.backward()
+        self.timers['backwardPass'][self.timer_step] = time.time() - self.timers['backwardPass'][self.timer_step]
 
         if SIZE == 1:
             model = self.model 
@@ -726,7 +769,24 @@ class Trainer:
         #for p in model.parameters():
         #    p.grad = 0.1 * SIZE * torch.ones_like(p.grad)  # or whatever other operation
 
+        self.timers['optimizerStep'][self.timer_step] = time.time()
         self.optimizer.step()
+        self.timers['optimizerStep'][self.timer_step] = time.time() - self.timers['optimizerStep'][self.timer_step]
+
+        # Update timers 
+        if self.timer_step < self.timer_step_max - 1:
+            self.update_timers()
+            self.timer_step += 1
+        else: # write timers 
+            savepath = self.cfg.profile_dir
+            if RANK == 0:
+                if not os.path.exists(savepath):
+                    os.makedirs(savepath)
+            COMM.Barrier()
+            torch.save(self.timers, savepath + '/timers_%s.tar' %(model.get_save_header()))
+            torch.save(self.timers_max, savepath + '/timers_max_%s.tar' %(model.get_save_header()))
+            torch.save(self.timers_min, savepath + '/timers_min_%s.tar' %(model.get_save_header()))
+            torch.save(self.timers_avg, savepath + '/timers_avg_%s.tar' %(model.get_save_header()))
 
         return loss 
 
@@ -947,9 +1007,6 @@ class Trainer:
 
         return prof
 
-
-
-
     def train_epoch(self, epoch: int) -> dict:
         self.model.train()
         start = time.time()
@@ -1020,7 +1077,6 @@ class Trainer:
 
         return {'loss': loss_avg}
 
-
     def writeGraphStatistics(self):
         if RANK == 0: log.info(f"In writeGraphStatistics")
         # Write the number of nodes, halo nodes, and edges in each rank of the sub-graph 
@@ -1056,6 +1112,7 @@ class Trainer:
         torch.save(a, savepath + '/%s.tar' %(model.get_save_header())) 
         
         return 
+
 
 
 def train(cfg: DictConfig) -> None:
