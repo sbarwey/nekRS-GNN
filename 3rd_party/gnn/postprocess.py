@@ -81,7 +81,7 @@ if __name__ == "__main__":
         """
         POLY = 1
         #SIZE_LIST = [1,2,4,8]
-        SIZE_LIST = [1,8]
+        SIZE_LIST = [1,4]
         COLOR_LIST = ['tab:blue', 'tab:orange', 'tab:red', 'tab:green']
         HALO_LIST = ['none', 'all_to_all', 'send_recv']
         #HALO_LIST = ['none']
@@ -103,7 +103,7 @@ if __name__ == "__main__":
                 # new gnn 
                 mp = 4
                 #model_path_1 = f"./saved_models/new_gnn/real_grad/POLY_{POLY}_RANK_0_SIZE_{size}_SEED_12_3_7_32_3_2_{mp}_{halo}.tar"
-                model_path_1 = f"./saved_models/POLY_{POLY}_RANK_0_SIZE_{size}_SEED_12_3_4_32_3_2_{mp}_{halo}.tar"
+                model_path_1 = f"./saved_models_polaris/POLY_{POLY}_RANK_0_SIZE_{size}_SEED_12_3_4_32_3_2_{mp}_{halo}.tar"
                 #model_path_2 = f"./saved_models/new_gnn/hardcode_grad/POLY_{POLY}_RANK_0_SIZE_{size}_SEED_12_3_7_32_3_2_{mp}_{halo}.tar"
 
                 a_1 = torch.load(model_path_1)
