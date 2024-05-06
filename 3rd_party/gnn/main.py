@@ -45,9 +45,6 @@ import models.gnn as gnn
 import graph_connectivity as gcon
 import graph_plotting as gplot
 
-# Clean printing
-from prettytable import PrettyTable 
-
 log = logging.getLogger(__name__)
 
 TORCH_FLOAT_DTYPE = torch.float32
@@ -390,8 +387,8 @@ class Trainer:
         return mask_send, mask_recv 
 
     def build_buffers(self, n_features):
-        buff_send = [torch.tensor([])] * SIZE
-        buff_recv = [torch.tensor([])] * SIZE
+        buff_send = [torch.tensor([], device=DEVICE_ID)] * SIZE
+        buff_recv = [torch.tensor([], device=DEVICE_ID)] * SIZE
         n_max = 0
         
         if SIZE > 1: 
@@ -643,8 +640,8 @@ class Trainer:
         # Populate edge_attrs
         cart = torch_geometric.transforms.Cartesian(norm=False, max_value = None, cat = False)
         dist = torch_geometric.transforms.Distance(norm = False, max_value = None, cat = True)
-        cart(data_temp) # adds cartesian/component-wise distance
-        dist(data_temp) # adds euclidean distance
+        data_temp = cart(data_temp) # adds cartesian/component-wise distance
+        data_temp = dist(data_temp) # adds euclidean distance
 
         data_temp = data_temp.to(device_for_loading)
         data_train_list.append(data_temp)
@@ -702,7 +699,7 @@ class Trainer:
             data.edge_index = data.edge_index.cuda()
             data.edge_weight = data.edge_weight.cuda()
             data.edge_attr = data.edge_attr.cuda()
-            data.batch = data.batch.cuda() if data.batch else None
+            data.batch = data.batch.cuda() if data.batch is not None else None
             data.halo_info = data.halo_info.cuda()
             data.node_degree = data.node_degree.cuda()
             loss = loss.cuda()
@@ -788,6 +785,8 @@ class Trainer:
             torch.save(self.timers_min, savepath + '/timers_min_%s.tar' %(model.get_save_header()))
             torch.save(self.timers_avg, savepath + '/timers_avg_%s.tar' %(model.get_save_header()))
 
+        force_abort()
+
         return loss 
 
     def train_step_verification(self, data: DataBatch) -> Tensor:
@@ -799,7 +798,7 @@ class Trainer:
             data.edge_index = data.edge_index.cuda()
             data.edge_weight = data.edge_weight.cuda()
             data.edge_attr = data.edge_attr.cuda()
-            data.batch = data.batch.cuda() if data.batch else None
+            data.batch = data.batch.cuda() if data.batch is not None else None
             data.halo_info = data.halo_info.cuda()
             data.node_degree = data.node_degree.cuda()
             loss = loss.cuda()
@@ -945,7 +944,7 @@ class Trainer:
                     data.edge_index = data.edge_index.cuda()
                     data.edge_weight = data.edge_weight.cuda()
                     data.edge_attr = data.edge_attr.cuda()
-                    data.batch = data.batch.cuda() if data.batch else None
+                    data.batch = data.batch.cuda() if data.batch is not None else None
                     data.halo_info = data.halo_info.cuda()
                     data.node_degree = data.node_degree.cuda()
                     loss = loss.cuda()
