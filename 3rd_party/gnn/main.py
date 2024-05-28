@@ -682,10 +682,22 @@ class Trainer:
         keys = self.timers.keys()
         i = self.timer_step
         for key in keys:
-            self.timers_avg[key][i] = metric_average(torch.tensor( self.timers[key][i] )).item()
-            self.timers_min[key][i] = metric_min(torch.tensor( self.timers[key][i] )).item()
-            self.timers_max[key][i] = metric_max(torch.tensor( self.timers[key][i] )).item()
-
+            t_data = np.array(self.timers[key][i], dtype=np.float32)
+            if SIZE > 1:
+                t_avg = np.empty_like(t_data)
+                t_min = np.empty_like(t_data)
+                t_max = np.empty_like(t_data)
+                COMM.Allreduce(t_data, t_avg, op=MPI.SUM)
+                t_avg = t_avg/SIZE
+                COMM.Allreduce(t_data, t_min, op=MPI.MIN)
+                COMM.Allreduce(t_data, t_max, op=MPI.MAX)
+            else:
+                t_avg = t_data
+                t_min = t_data
+                t_max = t_data
+            self.timers_avg[key][i] = t_avg #metric_average(torch.tensor( self.timers[key][i] )).item()
+            self.timers_min[key][i] = t_min #metric_min(torch.tensor( self.timers[key][i] )).item()
+            self.timers_max[key][i] = t_max #metric_max(torch.tensor( self.timers[key][i] )).item()
             if RANK == 0:
                 log.info(f"t_{key} [min,max,avg] = [{self.timers_min[key][i]},{self.timers_max[key][i]},{self.timers_avg[key][i]}]") 
         return
@@ -721,6 +733,7 @@ class Trainer:
         
         # Prediction
         self.timers['forwardPass'][self.timer_step] = time.time()
+        log.info(f"[RANK {RANK}] -- in forward pass.")
         out_gnn = self.model(x = data.x,
                              edge_index = data.edge_index,
                              edge_attr = data.edge_attr,
@@ -784,8 +797,6 @@ class Trainer:
             torch.save(self.timers_max, savepath + '/timers_max_%s.tar' %(model.get_save_header()))
             torch.save(self.timers_min, savepath + '/timers_min_%s.tar' %(model.get_save_header()))
             torch.save(self.timers_avg, savepath + '/timers_avg_%s.tar' %(model.get_save_header()))
-
-        force_abort()
 
         return loss 
 
