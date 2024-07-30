@@ -75,7 +75,7 @@ if __name__ == "__main__":
         plt.show(block=False)
 
 
-    if 1 == 1:
+    if 1 == 0:
         """
         Looking at consistency in training -- loss versus iter. 
         """
@@ -103,7 +103,7 @@ if __name__ == "__main__":
                 # new gnn 
                 mp = 4
                 #model_path_1 = f"./saved_models/new_gnn/real_grad/POLY_{POLY}_RANK_0_SIZE_{size}_SEED_12_3_7_32_3_2_{mp}_{halo}.tar"
-                model_path_1 = f"./saved_models_polaris/POLY_{POLY}_RANK_0_SIZE_{size}_SEED_12_3_4_32_3_2_{mp}_{halo}.tar"
+                model_path_1 = f"./saved_models/POLY_{POLY}_RANK_0_SIZE_{size}_SEED_12_3_4_32_3_2_{mp}_{halo}.tar"
                 #model_path_2 = f"./saved_models/new_gnn/hardcode_grad/POLY_{POLY}_RANK_0_SIZE_{size}_SEED_12_3_7_32_3_2_{mp}_{halo}.tar"
 
                 a_1 = torch.load(model_path_1)
@@ -133,12 +133,48 @@ if __name__ == "__main__":
         ax.set_xlabel('Iterations')
         ax.set_ylabel('Loss')
         ax.set_yscale('log')
-        #ax.legend(fancybox=False, framealpha=1)
+        ax.legend(fancybox=False, framealpha=1)
         #ax.set_xlim([1,10])
 
-        
-
         plt.show(block=False)
+
+    if 1 == 1:
+        """
+        Looking at profiler outputs (NEW -- custom timers) 
+        """
+        timer_dir = "./outputs/profiles/new_timers" 
+        
+        SIZE_LIST = [1,2,4]
+        POLY = 1
+        data_all_to_all = [] 
+        data_send_recv = []
+        data_none = []
+
+        for SIZE in SIZE_LIST:
+            data_all_to_all.append( torch.load(f"{timer_dir}/timers_avg_POLY_1_RANK_0_SIZE_{SIZE}_SEED_12_3_4_32_3_2_4_all_to_all.tar") )
+            data_send_recv.append( torch.load(f"{timer_dir}/timers_avg_POLY_1_RANK_0_SIZE_{SIZE}_SEED_12_3_4_32_3_2_4_send_recv.tar") )
+            data_none.append( torch.load(f"{timer_dir}/timers_avg_POLY_1_RANK_0_SIZE_{SIZE}_SEED_12_3_4_32_3_2_4_none.tar") )
+
+        qoi = "forwardPass"
+        qoi = "backwardPass"
+        qoi = "loss"
+        lb = 10
+        fig, ax = plt.subplots()
+        for i in range(len(SIZE_LIST)):
+            ax.plot( SIZE_LIST[i], data_all_to_all[i][qoi][-lb:-1].mean(), marker='o', lw=0, ms=12, color='black' )  
+            ax.plot( SIZE_LIST[i], data_all_to_all[i][qoi][-lb:-1].min(), marker='+', lw=0, ms=12, color='black' )  
+            ax.plot( SIZE_LIST[i], data_all_to_all[i][qoi][-lb:-1].max(), marker='+', lw=0, ms=12, color='black' )  
+
+            ax.plot( SIZE_LIST[i], data_send_recv[i][qoi][-lb:-1].mean(), marker='o', lw=0, ms=12, color='red' )
+            ax.plot( SIZE_LIST[i], data_send_recv[i][qoi][-lb:-1].min(), marker='+', lw=0, ms=12, color='red' )
+            ax.plot( SIZE_LIST[i], data_send_recv[i][qoi][-lb:-1].max(), marker='+', lw=0, ms=12, color='red' )
+
+            ax.plot( SIZE_LIST[i], data_none[i][qoi][-lb:-1].mean(), marker='o', lw=0, ms=12, color='blue' )
+            ax.plot( SIZE_LIST[i], data_none[i][qoi][-lb:-1].min(), marker='+', lw=0, ms=12, color='blue' )
+            ax.plot( SIZE_LIST[i], data_none[i][qoi][-lb:-1].max(), marker='+', lw=0, ms=12, color='blue' )
+        plt.show(block=False)
+
+        asdf
 
     if 1 == 0: 
         """
