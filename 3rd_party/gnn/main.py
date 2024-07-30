@@ -150,8 +150,8 @@ class Trainer:
         self.rank = RANK
         if scaler is None:
             self.scaler = None
-        #self.device = 'gpu' if torch.cuda.is_available() else 'cpu'
-        self.device = 'gpu' if WITH_CUDA else 'cpu'
+        self.device = 'gpu' if torch.cuda.is_available() else 'cpu'
+        #self.device = 'gpu' if WITH_CUDA else 'cpu'
         self.backend = self.cfg.backend
         if WITH_DDP:
             init_process_group(RANK, SIZE, backend=self.backend)
