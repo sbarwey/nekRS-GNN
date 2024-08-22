@@ -62,7 +62,7 @@ try:
 
     WITH_CUDA = torch.cuda.is_available()
 
-    # # Override gpu utilization
+    # Override gpu utilization
     # WITH_CUDA = False
 
     DEVICE = 'gpu' if WITH_CUDA else 'cpu'
@@ -150,8 +150,8 @@ class Trainer:
         self.rank = RANK
         if scaler is None:
             self.scaler = None
-        self.device = 'gpu' if torch.cuda.is_available() else 'cpu'
-        #self.device = 'gpu' if WITH_CUDA else 'cpu'
+        #self.device = 'gpu' if torch.cuda.is_available() else 'cpu'
+        self.device = 'gpu' if WITH_CUDA else 'cpu'
         self.backend = self.cfg.backend
         if WITH_DDP:
             init_process_group(RANK, SIZE, backend=self.backend)
@@ -812,6 +812,7 @@ class Trainer:
             data.batch = data.batch.cuda() if data.batch is not None else None
             data.halo_info = data.halo_info.cuda()
             data.node_degree = data.node_degree.cuda()
+            data.pos = data.pos.cuda()
             loss = loss.cuda()
                     
         self.optimizer.zero_grad()
@@ -834,6 +835,8 @@ class Trainer:
 
         # Toy loss: evaluate at all of the nodes 
         n_nodes_local = data.n_nodes_local
+        if WITH_CUDA:
+            n_nodes_local = n_nodes_local.cuda()
 
         if SIZE == 1:
             loss = self.loss_fn(out_gnn[:n_nodes_local], target[:n_nodes_local])
@@ -874,6 +877,8 @@ class Trainer:
 
         # Edge weights 
         n_edges_local = torch.tensor(data.edge_index.shape[1])
+        if WITH_CUDA:
+            n_edges_local = n_edges_local.cuda()
         n_edges = distnn.all_reduce(n_edges_local)
         effective_edges_local = torch.tensor(data.edge_weight.sum())
         effective_edges = distnn.all_reduce(effective_edges_local)
@@ -911,6 +916,7 @@ class Trainer:
             path_desc = 'float32'
         
         savepath = self.cfg.work_dir + '/outputs/postproc/real_gnn_test_4/periodic_after_fix_edges_2/gradient_data_gpu_nondeterministic_POLARIS/tgv_poly_1/%s' %(path_desc)
+        savepath = self.cfg.work_dir + '/outputs/postproc/gnn_verification_for_paper/tgv_poly_1/%s' %(path_desc)
 
         # if path doesnt exist, make it 
         if RANK == 0:
