@@ -17,7 +17,8 @@ echo "Job started at: {$TSTAMP}"
 
 
 # Load modules: 
-source /lus/eagle/projects/datascience/sbarwey/codes/ml/pytorch_geometric/module_config
+#source /lus/eagle/projects/datascience/sbarwey/codes/ml/pytorch_geometric/module_config
+source /lus/eagle/projects/datascience/sbarwey/codes/ml/pytorch_geometric/module_config_new
 
 # Get number of ranks 
 NUM_NODES=$(wc -l < "${PBS_NODEFILE}")

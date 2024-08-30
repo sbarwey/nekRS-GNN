@@ -1269,21 +1269,21 @@ def train_profile(cfg: DictConfig) -> None:
 
 @hydra.main(version_base=None, config_path='./conf', config_name='config')
 def main(cfg: DictConfig) -> None:
-    # print('Rank %d, local rank %d, which has device %s. Sees %d devices.' %(RANK,int(LOCAL_RANK),DEVICE,torch.cuda.device_count()))
+    print('Rank %d, local rank %d, which has device %s. Sees %d devices.' %(RANK,int(LOCAL_RANK),DEVICE,torch.cuda.device_count()))
     if RANK == 0:
         print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
         print('INPUTS:')
         print(OmegaConf.to_yaml(cfg)) 
         print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
 
-    if cfg.profile: 
-        train_profile(cfg)
-    else: 
-        train(cfg)
+    # if cfg.profile: 
+    #     train_profile(cfg)
+    # else: 
+    #     train(cfg)
 
     #halo_test(cfg)
     
-    cleanup()
+    #cleanup()
 
 if __name__ == '__main__':
     main()

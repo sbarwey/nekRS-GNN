@@ -17,8 +17,13 @@ cd ${PBS_O_WORKDIR}
 TSTAMP=$(date "+%Y-%m-%d-%H%M%S")
 echo "Job started at: {$TSTAMP}"
 
-# Load modules: 
-source /lus/eagle/projects/datascience/sbarwey/codes/ml/pytorch_geometric/module_config
+# Load modules -- OLD: 
+# source /lus/eagle/projects/datascience/sbarwey/codes/ml/pytorch_geometric/module_config
+
+# Load modules -- NEW:
+module restore
+module use /soft/modulefiles
+module load jax/0.4.29-dev
 
 # Get number of ranks 
 NUM_NODES=$(wc -l < "${PBS_NODEFILE}")
