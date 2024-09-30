@@ -170,10 +170,11 @@ class Trainer:
         self.data = self.setup_data()
         if RANK == 0: log.info('Done with setup_data')
 
+
         # ~~~~ Setup halo exchange masks
         self.mask_send, self.mask_recv = self.build_masks()
         if RANK == 0: log.info('Done with build_masks')
-
+        
         # ~~~~ Initialize send/recv buffers on device (if applicable)
         self.buffer_send, self.buffer_recv, self.n_buffer_rows = self.build_buffers(self.cfg.hidden_channels)
         if RANK == 0: log.info('Done with build_buffers')
@@ -259,10 +260,7 @@ class Trainer:
             log.info('In build_model...')
 
         sample = self.data['train']['example'] 
-
-        # # Toy model 
-        # model = gnn.toy_gnn_distributed(halo_swap_mode = self.cfg.halo_swap_mode,
-        #                                 name = 'TOY_RANK_%d_SIZE_%d' %(RANK,SIZE))
+        graph = self.data['graph']
 
         # Get the polynomial order -- for naming the model  
         try:
@@ -274,26 +272,15 @@ class Trainer:
             poly = 0
 
         # Full model 
-        input_node_channels = sample.x.shape[1]
-        input_edge_channels = sample.edge_attr.shape[1]
+        input_node_channels = sample['x'].shape[1]
+        input_edge_channels = graph.edge_attr.shape[1]
         hidden_channels = self.cfg.hidden_channels
-        output_node_channels = sample.y.shape[1]
+        output_node_channels = sample['y'].shape[1]
         n_mlp_hidden_layers = self.cfg.n_mlp_hidden_layers
         n_messagePassing_layers = self.cfg.n_messagePassing_layers
         halo_swap_mode = self.cfg.halo_swap_mode
         name = 'POLY_%d_RANK_%d_SIZE_%d_SEED_%d' %(poly,RANK,SIZE,self.cfg.seed) 
 
-        # # Full model -- old 
-        # model = gnn.mp_gnn_distributed(input_node_channels, 
-        #                    hidden_channels, 
-        #                    output_node_channels, 
-        #                    [n_mlp_hidden_layers + 1]*3,
-        #                    n_messagePassing_layers, 
-        #                    activation = F.elu,
-        #                    halo_swap_mode= halo_swap_mode, 
-        #                    name=name)
-
-        # Full model -- new 
         model = gnn.DistributedGNN(input_node_channels,
                            input_edge_channels,
                            hidden_channels,
@@ -371,7 +358,11 @@ class Trainer:
 
         if SIZE > 1: 
             #n_nodes_local = self.data.n_nodes_internal + self.data.n_nodes_halo
-            halo_info = self.data['train']['example'].halo_info
+            # sb: test 
+
+            #halo_info = self.data['train']['example'].halo_info
+            halo_info = self.data['graph'].halo_info
+
 
             for i in self.neighboring_procs:
                 idx_i = halo_info[:,3] == i
@@ -548,6 +539,26 @@ class Trainer:
 
         return 
 
+
+    def prepare_snapshot_data(self, path_to_snap: str):
+        data_x = np.fromfile(path_to_snap, dtype=np.float64).reshape((-1,3)) 
+        data_x = data_x.astype(NP_FLOAT_DTYPE) # force NP_FLOAT_DTYPE
+        
+        # Retain only N_gll = Np*Ne elements
+        N_gll = self.data_full.pos.shape[0]
+        data_x = data_x[:N_gll, :]
+
+        # get data in reduced format 
+        data_x_reduced = data_x[self.idx_full2reduced, :] 
+
+        # Add halo nodes by appending the end of the node arrays
+        n_nodes_halo = self.data_reduced.n_nodes_halo
+        n_features_x = data_x_reduced.shape[1]
+        data_x_halo = torch.zeros((n_nodes_halo, n_features_x), dtype=TORCH_FLOAT_DTYPE)
+        x = torch.tensor(data_x_reduced)
+        x = torch.cat((x, data_x_halo), dim=0)
+        return x
+
     def setup_data(self):
         """
         Generate the PyTorch Geometric Dataset 
@@ -555,50 +566,72 @@ class Trainer:
         if RANK == 0:
             log.info('In setup_data...')
 
-        # Load data 
-        main_path = self.cfg.gnn_outputs_path
-        try:
-            path_to_x = main_path + 'fld_u_time_10.0_rank_%d_size_%d' %(RANK,SIZE)
-            path_to_y = main_path + 'fld_u_time_10.0_rank_%d_size_%d' %(RANK,SIZE)
-            data_x = np.fromfile(path_to_x + ".bin", dtype=np.float64).reshape((-1,3))
-            data_y = np.fromfile(path_to_y + ".bin", dtype=np.float64).reshape((-1,3))
-        except FileNotFoundError:
-            path_to_x = main_path + 'fld_u_time_0.0_rank_%d_size_%d' %(RANK,SIZE)
-            path_to_y = main_path + 'fld_u_time_0.0_rank_%d_size_%d' %(RANK,SIZE)
-            data_x = np.fromfile(path_to_x + ".bin", dtype=np.float64).reshape((-1,3))
-            data_y = np.fromfile(path_to_y + ".bin", dtype=np.float64).reshape((-1,3))
+        device_for_loading = 'cpu'
 
-        data_x = data_x.astype(NP_FLOAT_DTYPE)
-        data_y = data_y.astype(NP_FLOAT_DTYPE)
+        # data directory
+        dtfac = 1
+        data_dir = self.cfg.traj_data_path + f"/tinit_75.000000_dtfactor_{dtfac}/data_rank_{RANK}_size_{SIZE}"
 
-        # Retain only N_gll = Np*Ne elements
-        N_gll = self.data_full.pos.shape[0] 
-        data_x = data_x[:N_gll, :]
-        data_y = data_y[:N_gll, :]
+        # read files and remove pressure
+        files_temp = os.listdir(data_dir)
+        files = [item for item in files_temp if 'p_step' not in item] 
+        files.sort(key=lambda x:int(x.split('_')[-1].split('.')[0]))
+        
+        # populate dataset for single-step predictions 
+        idx = list(range(len(files)))
+        idx_x = idx[:-1]
+        idx_y = idx[1:]
+        data_traj = []
+        if RANK == 0: log.info("Loading trajectory data...")
+        for i in range(len(idx_x)):
+            step_x_i = idx_x[i]
+            step_y_i = idx_y[i]
+            path_x_i = data_dir + "/" + files[idx_x[i]]
+            path_y_i = data_dir + "/" + files[idx_y[i]]
+            data_x_i = self.prepare_snapshot_data(path_x_i)
+            data_y_i = self.prepare_snapshot_data(path_y_i)
+            data_traj.append(
+                    {'x': data_x_i, 'y':data_y_i, 'step_x':step_x_i, 'step_y':step_y_i} 
+                    )
+
+        # split into train/test 
+        fraction_valid = 0.1
+        if fraction_valid > 0:
+            # How many total snapshots to extract 
+            n_full = len(idx_x)
+            n_valid = int(np.floor(fraction_valid * n_full))
+
+            # Get validation set indices 
+            idx_valid = np.sort(np.random.choice(n_full, n_valid, replace=False))
+
+            # Get training set indices 
+            idx_train = np.array(list(set(list(range(n_full))) - set(list(idx_valid))))
+
+            # Train/test split 
+            data_traj_train = [data_traj[i] for i in idx_train]
+            data_traj_valid = [data_traj[i] for i in idx_valid]
+        else:
+            data_traj_train = data_traj
+            data_traj_valid = [{}]
+
+        if RANK == 0: log.info(f"Number of training snapshots: {len(idx_train)}")
+        if RANK == 0: log.info(f"Number of validation snapshots: {len(idx_valid)}")
 
         # Get data in reduced format (non-overlapping)
-        data_x_reduced = data_x[self.idx_full2reduced, :]
-        data_y_reduced = data_y[self.idx_full2reduced, :]
         pos_reduced = self.data_reduced.pos
 
         # Read in edge weights 
-        path_to_ew = main_path + 'edge_weights_rank_%d_size_%d.npy' %(RANK,SIZE)
+        path_to_ew = self.cfg.gnn_outputs_path + 'edge_weights_rank_%d_size_%d.npy' %(RANK,SIZE)
         edge_freq = torch.tensor(np.load(path_to_ew), dtype=TORCH_FLOAT_DTYPE)
         self.data_reduced.edge_weight = 1.0/edge_freq
 
         # Read in node degree
-        path_to_node_degree = main_path + 'node_degree_rank_%d_size_%d.npy' %(RANK,SIZE)
+        path_to_node_degree = self.cfg.gnn_outputs_path + 'node_degree_rank_%d_size_%d.npy' %(RANK,SIZE)
         node_degree = torch.tensor(np.load(path_to_node_degree), dtype=TORCH_FLOAT_DTYPE)
         self.data_reduced.node_degree = node_degree
 
         # Add halo nodes by appending the end of the node arrays  
         n_nodes_halo = self.data_reduced.n_nodes_halo 
-        n_features_x = data_x_reduced.shape[1]
-        data_x_halo = torch.zeros((n_nodes_halo, n_features_x), dtype=TORCH_FLOAT_DTYPE) 
-
-        n_features_y = data_y_reduced.shape[1]
-        data_y_halo = torch.zeros((n_nodes_halo, n_features_y), dtype=TORCH_FLOAT_DTYPE)
-
         n_features_pos = pos_reduced.shape[1]
         pos_halo = torch.zeros((n_nodes_halo, n_features_pos), dtype=TORCH_FLOAT_DTYPE)
 
@@ -613,25 +646,20 @@ class Trainer:
         edge_weight_halo = torch.zeros(n_nodes_halo)
 
         # Populate data object 
+        data_x_reduced = data_traj[0]['x']
+        data_y_reduced = data_traj[0]['y']
         n_features_in = data_x_reduced.shape[1]
         n_features_out = data_y_reduced.shape[1]
         n_nodes = self.data_reduced.pos.shape[0]
-        device_for_loading = 'cpu'
-
+        
         # Get dictionary 
         reduced_graph_dict = self.data_reduced.to_dict()
 
         # Create training dataset -- only 1 snapshot for demo
-        data_train_list = []
-        data_temp = Data(   
-                            x = torch.tensor(data_x_reduced), 
-                            y = torch.tensor(data_y_reduced)
-                        )
+        data_graph = Data()
         for key in reduced_graph_dict.keys():
-            data_temp[key] = reduced_graph_dict[key]
-        data_temp.x = torch.cat((data_temp.x, data_x_halo), dim=0)
-        data_temp.y = torch.cat((data_temp.y, data_y_halo), dim=0)
-        data_temp.pos = torch.cat((data_temp.pos, pos_halo), dim=0)
+            data_graph[key] = reduced_graph_dict[key]
+        data_graph.pos = torch.cat((data_graph.pos, pos_halo), dim=0)
         #data_temp.node_degree = torch.cat((data_temp.node_degree, node_degree_halo), dim=0)
         #data_temp.edge_index = torch.cat((data_temp.edge_index, edge_index_halo), dim=1)
         #data_temp.edge_weight = torch.cat((data_temp.edge_weight, edge_weight_halo), dim=0)
@@ -640,32 +668,42 @@ class Trainer:
         # Populate edge_attrs
         cart = torch_geometric.transforms.Cartesian(norm=False, max_value = None, cat = False)
         dist = torch_geometric.transforms.Distance(norm = False, max_value = None, cat = True)
-        data_temp = cart(data_temp) # adds cartesian/component-wise distance
-        data_temp = dist(data_temp) # adds euclidean distance
-
-        data_temp = data_temp.to(device_for_loading)
-        data_train_list.append(data_temp)
-        n_train = len(data_train_list) # should be 1
-       
-        train_dataset = data_train_list
-        test_dataset = data_train_list # no test dataset right now 
+        data_graph = cart(data_graph) # adds cartesian/component-wise distance
+        data_graph = dist(data_graph) # adds euclidean distance
+        data_graph = data_graph.to(device_for_loading)
 
         # No need for distributed sampler -- create standard dataset loader  
-        train_loader = torch_geometric.loader.DataLoader(train_dataset, batch_size=self.cfg.batch_size, shuffle=False)
-        test_loader = torch_geometric.loader.DataLoader(test_dataset, batch_size=self.cfg.test_batch_size, shuffle=False)  
-
+        # We can use the standard pytorch dataloader on (x,y) 
+        #train_loader = torch_geometric.loader.DataLoader(train_dataset, batch_size=self.cfg.batch_size, shuffle=False)
+        #test_loader = torch_geometric.loader.DataLoader(test_dataset, batch_size=self.cfg.test_batch_size, shuffle=False)  
         if (RANK == 0):
-            print(data_train_list[0])
+            log.info(f"{data_graph}")
+            log.info(f"shape of x: {data_traj[0]['x'].shape}")
+            log.info(f"shape of y: {data_traj[0]['y'].shape}")
+        
+        # ~~~~ Populate the data sampler. No need to use torch_geometric sampler -- we assume we have fixed connectivity, and a "GRAPH" batch size of 1. We need a sampler only over the [x,y] pairs (i.e., the elements in data_traj)
+        # train_loader = torch_geometric.loader.DataLoader(train_dataset, batch_size=self.cfg.batch_size, shuffle=False)
+        assert self.cfg.batch_size == 1, f"batch_size {self.cfg.batch_size} must be set to 1!"
+        assert self.cfg.test_batch_size == 1, f"test_batch_size {self.cfg.batch_size} must be set to 1!"
+
+        train_loader = torch.utils.data.DataLoader(dataset=data_traj_train, 
+                                     batch_size=self.cfg.batch_size,
+                                     shuffle=True)
+
+        test_loader = torch.utils.data.DataLoader(dataset=data_traj_valid,
+                                            batch_size=self.cfg.test_batch_size,
+                                            shuffle=False)
 
         return {
             'train': {
                 'loader': train_loader,
-                'example': train_dataset[0],
+                'example': data_traj_train[0],
             },
             'test': {
                 'loader': test_loader,
-                'example': test_dataset[0],
-            }
+                'example': data_traj_valid[0],
+            },
+            'graph': data_graph
         }
 
     def setup_timers(self, n_record: int) -> dict:
@@ -704,19 +742,20 @@ class Trainer:
 
     def train_step(self, data: DataBatch) -> Tensor:
         loss = torch.tensor([0.0])
+        graph = self.data['graph']
         self.timers['dataTransfer'][self.timer_step] = time.time()
         if WITH_CUDA:
-            data.x = data.x.cuda() 
-            data.y = data.y.cuda()
-            data.edge_index = data.edge_index.cuda()
-            data.edge_weight = data.edge_weight.cuda()
-            data.edge_attr = data.edge_attr.cuda()
-            data.batch = data.batch.cuda() if data.batch is not None else None
-            data.halo_info = data.halo_info.cuda()
-            data.node_degree = data.node_degree.cuda()
+            data['x'] = data['x'].cuda() 
+            data['y'] = data['y'].cuda()
+            graph.edge_index = graph.edge_index.cuda()
+            graph.edge_weight = graph.edge_weight.cuda()
+            graph.edge_attr = graph.edge_attr.cuda()
+            graph.batch = graph.batch.cuda() if graph.batch is not None else None
+            graph.halo_info = graph.halo_info.cuda()
+            graph.node_degree = graph.node_degree.cuda()
             loss = loss.cuda()
         self.timers['dataTransfer'][self.timer_step] = time.time() - self.timers['dataTransfer'][self.timer_step]
-        
+
         self.optimizer.zero_grad()
 
         # re-allocate send buffer 
@@ -733,35 +772,34 @@ class Trainer:
         
         # Prediction
         self.timers['forwardPass'][self.timer_step] = time.time()
-        log.info(f"[RANK {RANK}] -- in forward pass.")
-        out_gnn = self.model(x = data.x,
-                             edge_index = data.edge_index,
-                             edge_attr = data.edge_attr,
-                             edge_weight = data.edge_weight,
-                             halo_info = data.halo_info,
+        out_gnn = self.model(x = data['x'][0],
+                             edge_index = graph.edge_index,
+                             edge_attr = graph.edge_attr,
+                             edge_weight = graph.edge_weight,
+                             halo_info = graph.halo_info,
                              mask_send = self.mask_send,
                              mask_recv = self.mask_recv,
                              buffer_send = self.buffer_send,
                              buffer_recv = self.buffer_recv,
                              neighboring_procs = self.neighboring_procs,
                              SIZE = SIZE,
-                             batch = data.batch)
+                             batch = graph.batch)
         self.timers['forwardPass'][self.timer_step] = time.time() - self.timers['forwardPass'][self.timer_step]
 
         # Accumulate loss
         self.timers['loss'][self.timer_step] = time.time()
-        target = data.x
-        n_nodes_local = data.n_nodes_local
+        target = data['y'][0]
+        n_nodes_local = graph.n_nodes_local
         if SIZE == 1:
             loss = self.loss_fn(out_gnn[:n_nodes_local], target[:n_nodes_local])
             effective_nodes = n_nodes_local 
         else: # custom 
             n_output_features = out_gnn.shape[1]
             squared_errors_local = torch.pow(out_gnn[:n_nodes_local] - target[:n_nodes_local], 2)
-            squared_errors_local = squared_errors_local/data.node_degree[:n_nodes_local].unsqueeze(-1)
+            squared_errors_local = squared_errors_local/graph.node_degree[:n_nodes_local].unsqueeze(-1)
 
             sum_squared_errors_local = squared_errors_local.sum()
-            effective_nodes_local = torch.sum(1.0/data.node_degree[:n_nodes_local])
+            effective_nodes_local = torch.sum(1.0/graph.node_degree[:n_nodes_local])
 
             effective_nodes = distnn.all_reduce(effective_nodes_local)
             sum_squared_errors = distnn.all_reduce(sum_squared_errors_local)
@@ -1276,14 +1314,14 @@ def main(cfg: DictConfig) -> None:
         print(OmegaConf.to_yaml(cfg)) 
         print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
 
-    # if cfg.profile: 
-    #     train_profile(cfg)
-    # else: 
-    #     train(cfg)
+    if cfg.profile: 
+        train_profile(cfg)
+    else: 
+        train(cfg)
 
     #halo_test(cfg)
     
-    #cleanup()
+    cleanup()
 
 if __name__ == '__main__':
     main()
