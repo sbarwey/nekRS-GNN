@@ -190,6 +190,8 @@ class Trainer:
         # ~~~~ Init training and testing loss history 
         self.loss_hist_train = np.zeros(self.cfg.epochs)
         self.loss_hist_test = np.zeros(self.cfg.epochs)
+        self.loss_hist_train_iter = np.zeros(100000)
+        self.loss_hist_test_iter = np.zeros(100000)
 
         # ~~~~ Set model and checkpoint savepaths 
         try:
@@ -1080,6 +1082,8 @@ class Trainer:
             batch_size = len(data)
             #loss = self.train_step_verification(data)
             loss = self.train_step(data)
+            self.loss_hist_train_iter[self.training_iter] = loss.item()
+
             running_loss += loss.item()
             count += 1 # accumulate current batch count
             self.training_iter += 1 # accumulate total training iteration
@@ -1259,7 +1263,8 @@ def train(cfg: DictConfig) -> None:
                     'input_dict' : ind,
                     'loss_hist_train' : trainer.loss_hist_train,
                     'loss_hist_test' : trainer.loss_hist_test,
-                    'training_iter' : trainer.training_iter
+                    'training_iter' : trainer.training_iter,
+                    'loss_hist_train_iter' : trainer.loss_hist_train_iter
                     }
         
         torch.save(save_dict, trainer.model_path)
