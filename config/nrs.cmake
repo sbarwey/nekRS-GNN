@@ -59,6 +59,7 @@ set(SRC
     src/plugins/velRecycling.cpp
     src/plugins/gnn.cpp
     src/plugins/gnn_connectivity.cpp
+    src/plugins/trajGen.cpp
     src/plugins/RANSktau.cpp
     src/plugins/lowMach.cpp
     src/plugins/lpm.cpp
