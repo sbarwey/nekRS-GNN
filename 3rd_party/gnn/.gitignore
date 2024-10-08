@@ -11,6 +11,7 @@ logs/
 datasets/
 ckpt/
 saved_models/
+old_mains/
 
 *.swp
 .DS_Store

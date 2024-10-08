@@ -40,7 +40,6 @@ import torch_geometric.nn as tgnn
 
 # Models
 import models.gnn as gnn
-import models.gnn_v2 as gnn_v2
 
 # Graph connectivity/plotting 
 import graph_connectivity as gcon
@@ -63,7 +62,7 @@ try:
 
     WITH_CUDA = torch.cuda.is_available()
 
-    # # Override gpu utilization
+    # Override gpu utilization
     # WITH_CUDA = False
 
     DEVICE = 'gpu' if WITH_CUDA else 'cpu'
@@ -151,8 +150,8 @@ class Trainer:
         self.rank = RANK
         if scaler is None:
             self.scaler = None
-        self.device = 'gpu' if torch.cuda.is_available() else 'cpu'
-        #self.device = 'gpu' if WITH_CUDA else 'cpu'
+        #self.device = 'gpu' if torch.cuda.is_available() else 'cpu'
+        self.device = 'gpu' if WITH_CUDA else 'cpu'
         self.backend = self.cfg.backend
         if WITH_DDP:
             init_process_group(RANK, SIZE, backend=self.backend)
@@ -171,10 +170,11 @@ class Trainer:
         self.data = self.setup_data()
         if RANK == 0: log.info('Done with setup_data')
 
+
         # ~~~~ Setup halo exchange masks
         self.mask_send, self.mask_recv = self.build_masks()
         if RANK == 0: log.info('Done with build_masks')
-
+        
         # ~~~~ Initialize send/recv buffers on device (if applicable)
         self.buffer_send, self.buffer_recv, self.n_buffer_rows = self.build_buffers(self.cfg.hidden_channels)
         if RANK == 0: log.info('Done with build_buffers')
@@ -190,6 +190,8 @@ class Trainer:
         # ~~~~ Init training and testing loss history 
         self.loss_hist_train = np.zeros(self.cfg.epochs)
         self.loss_hist_test = np.zeros(self.cfg.epochs)
+        self.loss_hist_train_iter = np.zeros(100000)
+        self.loss_hist_test_iter = np.zeros(100000)
 
         # ~~~~ Set model and checkpoint savepaths 
         try:
@@ -260,10 +262,7 @@ class Trainer:
             log.info('In build_model...')
 
         sample = self.data['train']['example'] 
-
-        # # Toy model 
-        # model = gnn.toy_gnn_distributed(halo_swap_mode = self.cfg.halo_swap_mode,
-        #                                 name = 'TOY_RANK_%d_SIZE_%d' %(RANK,SIZE))
+        graph = self.data['graph']
 
         # Get the polynomial order -- for naming the model  
         try:
@@ -275,16 +274,16 @@ class Trainer:
             poly = 0
 
         # Full model 
-        input_node_channels = sample.x.shape[1]
-        input_edge_channels = sample.pos.shape[1] + sample.x.shape[1] + 1
+        input_node_channels = sample['x'].shape[1]
+        input_edge_channels = graph.edge_attr.shape[1]
         hidden_channels = self.cfg.hidden_channels
-        output_node_channels = sample.y.shape[1]
+        output_node_channels = sample['y'].shape[1]
         n_mlp_hidden_layers = self.cfg.n_mlp_hidden_layers
         n_messagePassing_layers = self.cfg.n_messagePassing_layers
         halo_swap_mode = self.cfg.halo_swap_mode
         name = 'POLY_%d_RANK_%d_SIZE_%d_SEED_%d' %(poly,RANK,SIZE,self.cfg.seed) 
 
-        model = gnn_v2.DistributedGNN(input_node_channels,
+        model = gnn.DistributedGNN(input_node_channels,
                            input_edge_channels,
                            hidden_channels,
                            output_node_channels,
@@ -361,7 +360,11 @@ class Trainer:
 
         if SIZE > 1: 
             #n_nodes_local = self.data.n_nodes_internal + self.data.n_nodes_halo
-            halo_info = self.data['train']['example'].halo_info
+            # sb: test 
+
+            #halo_info = self.data['train']['example'].halo_info
+            halo_info = self.data['graph'].halo_info
+
 
             for i in self.neighboring_procs:
                 idx_i = halo_info[:,3] == i
@@ -538,6 +541,26 @@ class Trainer:
 
         return 
 
+
+    def prepare_snapshot_data(self, path_to_snap: str):
+        data_x = np.fromfile(path_to_snap, dtype=np.float64).reshape((-1,3)) 
+        data_x = data_x.astype(NP_FLOAT_DTYPE) # force NP_FLOAT_DTYPE
+        
+        # Retain only N_gll = Np*Ne elements
+        N_gll = self.data_full.pos.shape[0]
+        data_x = data_x[:N_gll, :]
+
+        # get data in reduced format 
+        data_x_reduced = data_x[self.idx_full2reduced, :] 
+
+        # Add halo nodes by appending the end of the node arrays
+        n_nodes_halo = self.data_reduced.n_nodes_halo
+        n_features_x = data_x_reduced.shape[1]
+        data_x_halo = torch.zeros((n_nodes_halo, n_features_x), dtype=TORCH_FLOAT_DTYPE)
+        x = torch.tensor(data_x_reduced)
+        x = torch.cat((x, data_x_halo), dim=0)
+        return x
+
     def setup_data(self):
         """
         Generate the PyTorch Geometric Dataset 
@@ -545,50 +568,72 @@ class Trainer:
         if RANK == 0:
             log.info('In setup_data...')
 
-        # Load data 
-        main_path = self.cfg.gnn_outputs_path
-        try:
-            path_to_x = main_path + 'fld_u_time_10.0_rank_%d_size_%d' %(RANK,SIZE)
-            path_to_y = main_path + 'fld_u_time_10.0_rank_%d_size_%d' %(RANK,SIZE)
-            data_x = np.fromfile(path_to_x + ".bin", dtype=np.float64).reshape((-1,3))
-            data_y = np.fromfile(path_to_y + ".bin", dtype=np.float64).reshape((-1,3))
-        except FileNotFoundError:
-            path_to_x = main_path + 'fld_u_time_0.0_rank_%d_size_%d' %(RANK,SIZE)
-            path_to_y = main_path + 'fld_u_time_0.0_rank_%d_size_%d' %(RANK,SIZE)
-            data_x = np.fromfile(path_to_x + ".bin", dtype=np.float64).reshape((-1,3))
-            data_y = np.fromfile(path_to_y + ".bin", dtype=np.float64).reshape((-1,3))
+        device_for_loading = 'cpu'
 
-        data_x = data_x.astype(NP_FLOAT_DTYPE)
-        data_y = data_y.astype(NP_FLOAT_DTYPE)
+        # data directory
+        dtfac = 100
+        data_dir = self.cfg.traj_data_path + f"/tinit_75.000000_dtfactor_{dtfac}/data_rank_{RANK}_size_{SIZE}"
 
-        # Retain only N_gll = Np*Ne elements
-        N_gll = self.data_full.pos.shape[0] 
-        data_x = data_x[:N_gll, :]
-        data_y = data_y[:N_gll, :]
+        # read files and remove pressure
+        files_temp = os.listdir(data_dir)
+        files = [item for item in files_temp if 'p_step' not in item] 
+        files.sort(key=lambda x:int(x.split('_')[-1].split('.')[0]))
+
+        # populate dataset for single-step predictions 
+        idx = list(range(len(files)))
+        idx_x = idx[:-1]
+        idx_y = idx[1:]
+        data_traj = []
+        if RANK == 0: log.info("Loading trajectory data...")
+        for i in range(len(idx_x)):
+            step_x_i = idx_x[i]
+            step_y_i = idx_y[i]
+            path_x_i = data_dir + "/" + files[idx_x[i]]
+            path_y_i = data_dir + "/" + files[idx_y[i]]
+            data_x_i = self.prepare_snapshot_data(path_x_i)
+            data_y_i = self.prepare_snapshot_data(path_y_i)
+            data_traj.append(
+                    {'x': data_x_i, 'y':data_y_i, 'step_x':step_x_i, 'step_y':step_y_i} 
+                    )
+
+        # split into train/test 
+        fraction_valid = 0.1
+        if fraction_valid > 0:
+            # How many total snapshots to extract 
+            n_full = len(idx_x)
+            n_valid = int(np.floor(fraction_valid * n_full))
+
+            # Get validation set indices 
+            idx_valid = np.sort(np.random.choice(n_full, n_valid, replace=False))
+
+            # Get training set indices 
+            idx_train = np.array(list(set(list(range(n_full))) - set(list(idx_valid))))
+
+            # Train/test split 
+            data_traj_train = [data_traj[i] for i in idx_train]
+            data_traj_valid = [data_traj[i] for i in idx_valid]
+        else:
+            data_traj_train = data_traj
+            data_traj_valid = [{}]
+
+        if RANK == 0: log.info(f"Number of training snapshots: {len(idx_train)}")
+        if RANK == 0: log.info(f"Number of validation snapshots: {len(idx_valid)}")
 
         # Get data in reduced format (non-overlapping)
-        data_x_reduced = data_x[self.idx_full2reduced, :]
-        data_y_reduced = data_y[self.idx_full2reduced, :]
         pos_reduced = self.data_reduced.pos
 
         # Read in edge weights 
-        path_to_ew = main_path + 'edge_weights_rank_%d_size_%d.npy' %(RANK,SIZE)
+        path_to_ew = self.cfg.gnn_outputs_path + 'edge_weights_rank_%d_size_%d.npy' %(RANK,SIZE)
         edge_freq = torch.tensor(np.load(path_to_ew), dtype=TORCH_FLOAT_DTYPE)
         self.data_reduced.edge_weight = 1.0/edge_freq
 
         # Read in node degree
-        path_to_node_degree = main_path + 'node_degree_rank_%d_size_%d.npy' %(RANK,SIZE)
+        path_to_node_degree = self.cfg.gnn_outputs_path + 'node_degree_rank_%d_size_%d.npy' %(RANK,SIZE)
         node_degree = torch.tensor(np.load(path_to_node_degree), dtype=TORCH_FLOAT_DTYPE)
         self.data_reduced.node_degree = node_degree
 
         # Add halo nodes by appending the end of the node arrays  
         n_nodes_halo = self.data_reduced.n_nodes_halo 
-        n_features_x = data_x_reduced.shape[1]
-        data_x_halo = torch.zeros((n_nodes_halo, n_features_x), dtype=TORCH_FLOAT_DTYPE) 
-
-        n_features_y = data_y_reduced.shape[1]
-        data_y_halo = torch.zeros((n_nodes_halo, n_features_y), dtype=TORCH_FLOAT_DTYPE)
-
         n_features_pos = pos_reduced.shape[1]
         pos_halo = torch.zeros((n_nodes_halo, n_features_pos), dtype=TORCH_FLOAT_DTYPE)
 
@@ -603,53 +648,64 @@ class Trainer:
         edge_weight_halo = torch.zeros(n_nodes_halo)
 
         # Populate data object 
+        data_x_reduced = data_traj[0]['x']
+        data_y_reduced = data_traj[0]['y']
         n_features_in = data_x_reduced.shape[1]
         n_features_out = data_y_reduced.shape[1]
         n_nodes = self.data_reduced.pos.shape[0]
-        device_for_loading = 'cpu'
-
+        
         # Get dictionary 
         reduced_graph_dict = self.data_reduced.to_dict()
 
         # Create training dataset -- only 1 snapshot for demo
-        data_train_list = []
-        data_temp = Data(   
-                            x = torch.tensor(data_x_reduced), 
-                            y = torch.tensor(data_y_reduced)
-                        )
+        data_graph = Data()
         for key in reduced_graph_dict.keys():
-            data_temp[key] = reduced_graph_dict[key]
-        data_temp.x = torch.cat((data_temp.x, data_x_halo), dim=0)
-        data_temp.y = torch.cat((data_temp.y, data_y_halo), dim=0)
-        data_temp.pos = torch.cat((data_temp.pos, pos_halo), dim=0)
+            data_graph[key] = reduced_graph_dict[key]
+        data_graph.pos = torch.cat((data_graph.pos, pos_halo), dim=0)
         #data_temp.node_degree = torch.cat((data_temp.node_degree, node_degree_halo), dim=0)
         #data_temp.edge_index = torch.cat((data_temp.edge_index, edge_index_halo), dim=1)
         #data_temp.edge_weight = torch.cat((data_temp.edge_weight, edge_weight_halo), dim=0)
         #data_temp.edge_weight_temp = data_temp.edge_weight
 
-        data_temp = data_temp.to(device_for_loading)
-        data_train_list.append(data_temp)
-        n_train = len(data_train_list) # should be 1
-       
-        train_dataset = data_train_list
-        test_dataset = data_train_list # no test dataset right now 
+        # Populate edge_attrs
+        cart = torch_geometric.transforms.Cartesian(norm=False, max_value = None, cat = False)
+        dist = torch_geometric.transforms.Distance(norm = False, max_value = None, cat = True)
+        data_graph = cart(data_graph) # adds cartesian/component-wise distance
+        data_graph = dist(data_graph) # adds euclidean distance
+        data_graph = data_graph.to(device_for_loading)
 
         # No need for distributed sampler -- create standard dataset loader  
-        train_loader = torch_geometric.loader.DataLoader(train_dataset, batch_size=self.cfg.batch_size, shuffle=False)
-        test_loader = torch_geometric.loader.DataLoader(test_dataset, batch_size=self.cfg.test_batch_size, shuffle=False)  
-
+        # We can use the standard pytorch dataloader on (x,y) 
+        #train_loader = torch_geometric.loader.DataLoader(train_dataset, batch_size=self.cfg.batch_size, shuffle=False)
+        #test_loader = torch_geometric.loader.DataLoader(test_dataset, batch_size=self.cfg.test_batch_size, shuffle=False)  
         if (RANK == 0):
-            print(data_train_list[0])
+            log.info(f"{data_graph}")
+            log.info(f"shape of x: {data_traj[0]['x'].shape}")
+            log.info(f"shape of y: {data_traj[0]['y'].shape}")
+        
+        # ~~~~ Populate the data sampler. No need to use torch_geometric sampler -- we assume we have fixed connectivity, and a "GRAPH" batch size of 1. We need a sampler only over the [x,y] pairs (i.e., the elements in data_traj)
+        # train_loader = torch_geometric.loader.DataLoader(train_dataset, batch_size=self.cfg.batch_size, shuffle=False)
+        assert self.cfg.batch_size == 1, f"batch_size {self.cfg.batch_size} must be set to 1!"
+        assert self.cfg.test_batch_size == 1, f"test_batch_size {self.cfg.batch_size} must be set to 1!"
+
+        train_loader = torch.utils.data.DataLoader(dataset=data_traj_train, 
+                                     batch_size=self.cfg.batch_size,
+                                     shuffle=True)
+
+        test_loader = torch.utils.data.DataLoader(dataset=data_traj_valid,
+                                            batch_size=self.cfg.test_batch_size,
+                                            shuffle=False)
 
         return {
             'train': {
                 'loader': train_loader,
-                'example': train_dataset[0],
+                'example': data_traj_train[0],
             },
             'test': {
                 'loader': test_loader,
-                'example': test_dataset[0],
-            }
+                'example': data_traj_valid[0],
+            },
+            'graph': data_graph
         }
 
     def setup_timers(self, n_record: int) -> dict:
@@ -688,19 +744,20 @@ class Trainer:
 
     def train_step(self, data: DataBatch) -> Tensor:
         loss = torch.tensor([0.0])
+        graph = self.data['graph']
         self.timers['dataTransfer'][self.timer_step] = time.time()
         if WITH_CUDA:
-            data.x = data.x.cuda() 
-            data.y = data.y.cuda()
-            data.edge_index = data.edge_index.cuda()
-            data.pos = data.pos.cuda()
-            data.edge_weight = data.edge_weight.cuda()
-            data.batch = data.batch.cuda() if data.batch is not None else None
-            data.halo_info = data.halo_info.cuda()
-            data.node_degree = data.node_degree.cuda()
+            data['x'] = data['x'].cuda() 
+            data['y'] = data['y'].cuda()
+            graph.edge_index = graph.edge_index.cuda()
+            graph.edge_weight = graph.edge_weight.cuda()
+            graph.edge_attr = graph.edge_attr.cuda()
+            graph.batch = graph.batch.cuda() if graph.batch is not None else None
+            graph.halo_info = graph.halo_info.cuda()
+            graph.node_degree = graph.node_degree.cuda()
             loss = loss.cuda()
         self.timers['dataTransfer'][self.timer_step] = time.time() - self.timers['dataTransfer'][self.timer_step]
-        
+
         self.optimizer.zero_grad()
 
         # re-allocate send buffer 
@@ -717,35 +774,34 @@ class Trainer:
         
         # Prediction
         self.timers['forwardPass'][self.timer_step] = time.time()
-        log.info(f"[RANK {RANK}] -- in forward pass.")
-        out_gnn = self.model(x = data.x,
-                             edge_index = data.edge_index,
-                             pos = data.pos,
-                             edge_weight = data.edge_weight,
-                             halo_info = data.halo_info,
+        out_gnn = self.model(x = data['x'][0],
+                             edge_index = graph.edge_index,
+                             edge_attr = graph.edge_attr,
+                             edge_weight = graph.edge_weight,
+                             halo_info = graph.halo_info,
                              mask_send = self.mask_send,
                              mask_recv = self.mask_recv,
                              buffer_send = self.buffer_send,
                              buffer_recv = self.buffer_recv,
                              neighboring_procs = self.neighboring_procs,
                              SIZE = SIZE,
-                             batch = data.batch)
+                             batch = graph.batch)
         self.timers['forwardPass'][self.timer_step] = time.time() - self.timers['forwardPass'][self.timer_step]
 
         # Accumulate loss
         self.timers['loss'][self.timer_step] = time.time()
-        target = data.x
-        n_nodes_local = data.n_nodes_local
+        target = data['y'][0]
+        n_nodes_local = graph.n_nodes_local
         if SIZE == 1:
             loss = self.loss_fn(out_gnn[:n_nodes_local], target[:n_nodes_local])
             effective_nodes = n_nodes_local 
         else: # custom 
             n_output_features = out_gnn.shape[1]
             squared_errors_local = torch.pow(out_gnn[:n_nodes_local] - target[:n_nodes_local], 2)
-            squared_errors_local = squared_errors_local/data.node_degree[:n_nodes_local].unsqueeze(-1)
+            squared_errors_local = squared_errors_local/graph.node_degree[:n_nodes_local].unsqueeze(-1)
 
             sum_squared_errors_local = squared_errors_local.sum()
-            effective_nodes_local = torch.sum(1.0/data.node_degree[:n_nodes_local])
+            effective_nodes_local = torch.sum(1.0/graph.node_degree[:n_nodes_local])
 
             effective_nodes = distnn.all_reduce(effective_nodes_local)
             sum_squared_errors = distnn.all_reduce(sum_squared_errors_local)
@@ -784,6 +840,228 @@ class Trainer:
 
         return loss 
 
+    def train_step_verification(self, data: DataBatch) -> Tensor:
+        loss = torch.tensor([0.0])
+        
+        if WITH_CUDA:
+            data.x = data.x.cuda() 
+            data.y = data.y.cuda()
+            data.edge_index = data.edge_index.cuda()
+            data.edge_weight = data.edge_weight.cuda()
+            data.edge_attr = data.edge_attr.cuda()
+            data.batch = data.batch.cuda() if data.batch is not None else None
+            data.halo_info = data.halo_info.cuda()
+            data.node_degree = data.node_degree.cuda()
+            data.pos = data.pos.cuda()
+            loss = loss.cuda()
+                    
+        self.optimizer.zero_grad()
+        
+        out_gnn = self.model(x = data.x,
+                             edge_index = data.edge_index,
+                             edge_attr = data.edge_attr,
+                             edge_weight = data.edge_weight,
+                             halo_info = data.halo_info,
+                             mask_send = self.mask_send,
+                             mask_recv = self.mask_recv,
+                             buffer_send = self.buffer_send,
+                             buffer_recv = self.buffer_recv,
+                             neighboring_procs = self.neighboring_procs,
+                             SIZE = SIZE,
+                             batch = data.batch)
+
+        # Accumulate loss
+        target = data.x
+
+        # Toy loss: evaluate at all of the nodes 
+        n_nodes_local = data.n_nodes_local
+        if WITH_CUDA:
+            n_nodes_local = n_nodes_local.cuda()
+
+        if SIZE == 1:
+            loss = self.loss_fn(out_gnn[:n_nodes_local], target[:n_nodes_local])
+            effective_nodes = n_nodes_local 
+        else: # custom 
+            n_output_features = out_gnn.shape[1]
+            squared_errors_local = torch.pow(out_gnn[:n_nodes_local] - target[:n_nodes_local], 2)
+            squared_errors_local = squared_errors_local/data.node_degree[:n_nodes_local].unsqueeze(-1)
+
+            sum_squared_errors_local = squared_errors_local.sum()
+            effective_nodes_local = torch.sum(1.0/data.node_degree[:n_nodes_local])
+
+            effective_nodes = distnn.all_reduce(effective_nodes_local)
+            sum_squared_errors = distnn.all_reduce(sum_squared_errors_local)
+            loss = (1.0/(effective_nodes*n_output_features)) * sum_squared_errors
+
+        
+        #loss.backward()
+        #self.optimizer.step()
+
+        # Scaled sum of input node features 
+        x_scaled = data.x[:n_nodes_local, :]/data.node_degree[:n_nodes_local].unsqueeze(-1)
+        sum_x_scaled = x_scaled.sum(axis=0)
+        total_sum_x_scaled = distnn.all_reduce(sum_x_scaled)
+
+        # Scaled sum of output node features 
+        y_scaled = out_gnn[:n_nodes_local, :].detach()/data.node_degree[:n_nodes_local].unsqueeze(-1) 
+        sum_y_scaled = y_scaled.sum(axis=0)
+        total_sum_y_scaled = distnn.all_reduce(sum_y_scaled)
+
+        # Scaled sum of positions 
+        pos_scaled = data.pos[:n_nodes_local, :]/data.node_degree[:n_nodes_local].unsqueeze(-1)
+        sum_pos_scaled = pos_scaled.sum(axis=0)
+        total_sum_pos_scaled = distnn.all_reduce(sum_pos_scaled)
+
+        # Sum of n_nodes_local 
+        n_nodes = distnn.all_reduce(n_nodes_local)
+
+        # Edge weights 
+        n_edges_local = torch.tensor(data.edge_index.shape[1])
+        if WITH_CUDA:
+            n_edges_local = n_edges_local.cuda()
+        n_edges = distnn.all_reduce(n_edges_local)
+        effective_edges_local = torch.tensor(data.edge_weight.sum())
+        effective_edges = distnn.all_reduce(effective_edges_local)
+
+        log.info('[RANK %d] Loss: %g' %(RANK, loss.item()))
+        #log.info('[RANK %d] QoI in scaled: %g' %(RANK, total_sum_x_scaled.item()))
+        log.info(f'[RANK {RANK}] : Input dtype : {data.x.dtype}')
+        log.info(f'[RANK {RANK}] : Output dtype : {out_gnn.dtype}')
+        log.info(f'[RANK {RANK}] : QoI in scaled : {total_sum_x_scaled}')
+        log.info(f'[RANK {RANK}] : QoI out scaled : {total_sum_y_scaled}')
+        log.info('[RANK %d] n_nodes total: %g \t effective_nodes: %g' %(RANK, n_nodes.item(), effective_nodes.item()))
+        log.info('[RANK %d] ei_edges_local: %g \t ei_edges total: %g' %(RANK, n_edges_local.item(), n_edges.item()))
+        log.info('[RANK %d] effective_edges_local: %g \t effective_edges total: %g' %(RANK, effective_edges_local.item(), effective_edges.item()))
+        #log.info('[RANK %d] Effective nodes: %g' %(RANK, effective_nodes.item()))
+        #log.info('[RANK %d] QoI out: %g' %(RANK, qoi_out.item()))
+
+        # Print the backward gradient   
+        if SIZE == 1:
+            model = self.model 
+        else:
+            model = self.model.module 
+
+        # loop through model parameters 
+        grad_dict = {name: param.grad for name, param in model.named_parameters()}
+        grad_dict["loss"] = loss.item()
+        grad_dict["total_sum_x_scaled"] = total_sum_x_scaled
+        grad_dict["total_sum_y_scaled"] = total_sum_y_scaled
+        grad_dict["total_sum_pos_scaled"] = total_sum_pos_scaled
+        grad_dict["effective_nodes"] = effective_nodes
+        grad_dict["effective_edges"] = effective_edges
+
+        if (TORCH_FLOAT_DTYPE == torch.float64):
+            path_desc = 'float64'
+        else:
+            path_desc = 'float32'
+        
+        savepath = self.cfg.work_dir + '/outputs/postproc/real_gnn_test_4/periodic_after_fix_edges_2/gradient_data_gpu_nondeterministic_POLARIS/tgv_poly_1/%s' %(path_desc)
+        savepath = self.cfg.work_dir + '/outputs/postproc/gnn_verification_for_paper/tgv_poly_1/%s' %(path_desc)
+
+        # if path doesnt exist, make it 
+        if RANK == 0:
+            if not os.path.exists(savepath):
+                os.makedirs(savepath)
+                print("Directory created by root processor.")
+            else:
+                print("Directory already exists.")
+
+        # Synchronize all processors
+        COMM.Barrier()
+        
+        torch.save(grad_dict, savepath + '/%s.tar' %(model.get_save_header()))
+       
+        force_abort()
+        return loss 
+
+    def train_step_profile(self):
+        self.model.train()
+        wait = 5
+        warmup = 50
+        active = 200
+
+        # with torch.no_grad(): 
+        with profile(
+                activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+                schedule=torch.profiler.schedule(
+                    wait=wait,
+                    warmup=warmup,
+                    active=active)
+                #on_trace_ready=trace_handler
+            ) as prof:
+
+            data = self.data['train']['example']
+            for idx in range(wait+warmup+active): 
+                # log.info(f"\t[RANK {RANK}] -- step {idx}")
+
+                loss = torch.tensor([0.0])
+                if WITH_CUDA:
+                    data.x = data.x.cuda() 
+                    data.y = data.y.cuda()
+                    data.edge_index = data.edge_index.cuda()
+                    data.edge_weight = data.edge_weight.cuda()
+                    data.edge_attr = data.edge_attr.cuda()
+                    data.batch = data.batch.cuda() if data.batch is not None else None
+                    data.halo_info = data.halo_info.cuda()
+                    data.node_degree = data.node_degree.cuda()
+                    loss = loss.cuda()
+
+                self.optimizer.zero_grad()
+
+                # re-allocate send buffer 
+                if self.cfg.halo_swap_mode != 'none':
+                    for i in range(SIZE):
+                        self.buffer_send[i] = torch.zeros_like(self.buffer_send[i])
+                    for i in range(SIZE):
+                        self.buffer_recv[i] = torch.zeros_like(self.buffer_recv[i])
+
+                else:
+                    buffer_send = None
+                    buffer_recv = None
+                
+                with record_function(f"[RANK {RANK}] FORWARD PASS"):
+                    out_gnn = self.model(x = data.x,
+                                         edge_index = data.edge_index,
+                                         edge_attr = data.edge_attr,
+                                         edge_weight = data.edge_weight,
+                                         halo_info = data.halo_info,
+                                         mask_send = self.mask_send,
+                                         mask_recv = self.mask_recv,
+                                         buffer_send = self.buffer_send,
+                                         buffer_recv = self.buffer_recv,
+                                         neighboring_procs = self.neighboring_procs,
+                                         SIZE = SIZE,
+                                         batch = data.batch)
+
+                # target = data.x
+
+                # # Accumulate loss
+                # with record_function(f"[RANK {RANK}] LOSS"):
+                #     n_nodes_local = data.n_nodes_local
+                #     if SIZE == 1:
+                #         loss = self.loss_fn(out_gnn[:n_nodes_local], target[:n_nodes_local])
+                #         effective_nodes = n_nodes_local 
+                #     else:
+                #         n_output_features = out_gnn.shape[1]
+                #         squared_errors_local = torch.pow(out_gnn[:n_nodes_local] - target[:n_nodes_local], 2)
+                #         squared_errors_local = squared_errors_local/data.node_degree[:n_nodes_local].unsqueeze(-1)
+
+                #         sum_squared_errors_local = squared_errors_local.sum()
+                #         effective_nodes_local = torch.sum(1.0/data.node_degree[:n_nodes_local])
+
+                #         effective_nodes = distnn.all_reduce(effective_nodes_local)
+                #         sum_squared_errors = distnn.all_reduce(sum_squared_errors_local)
+                #         loss = (1.0/(effective_nodes*n_output_features)) * sum_squared_errors
+                # 
+                # with record_function(f"[RANK {RANK}] BACKWARD PASS"):
+                #     loss.backward()
+
+                # self.optimizer.step()
+
+                # Step the profiler 
+                prof.step()
+
+        return prof
 
     def train_epoch(self, epoch: int) -> dict:
         self.model.train()
@@ -802,7 +1080,10 @@ class Trainer:
 
         for bidx, data in enumerate(train_loader):
             batch_size = len(data)
+            #loss = self.train_step_verification(data)
             loss = self.train_step(data)
+            self.loss_hist_train_iter[self.training_iter] = loss.item()
+
             running_loss += loss.item()
             count += 1 # accumulate current batch count
             self.training_iter += 1 # accumulate total training iteration
@@ -982,7 +1263,8 @@ def train(cfg: DictConfig) -> None:
                     'input_dict' : ind,
                     'loss_hist_train' : trainer.loss_hist_train,
                     'loss_hist_test' : trainer.loss_hist_test,
-                    'training_iter' : trainer.training_iter
+                    'training_iter' : trainer.training_iter,
+                    'loss_hist_train_iter' : trainer.loss_hist_train_iter
                     }
         
         torch.save(save_dict, trainer.model_path)
@@ -994,16 +1276,56 @@ def train(cfg: DictConfig) -> None:
     return 
 
 
+def train_profile(cfg: DictConfig) -> None:
+    start = time.time()
+    trainer = Trainer(cfg)
+    # epoch_times = []
+
+    # Run a bunch of train steps 
+    t_prof = time.time()
+    prof = trainer.train_step_profile()
+    t_prof = time.time() - t_prof
+    log.info(f"[RANK {RANK}] -- t_prof = {t_prof} s")
+
+    if RANK == 0:
+        print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=10))
+
+    # save profiler data 
+    if SIZE == 1:
+        model = trainer.model
+    else:
+        model = trainer.model.module
+
+    # if path doesnt exist, make it 
+    savepath = cfg.profile_dir
+    if RANK == 0:
+        if not os.path.exists(savepath):
+            os.makedirs(savepath)
+            print("Directory created by root processor.")
+        else:
+            print("Directory already exists.")
+    COMM.Barrier()
+
+    torch.save(prof.key_averages(), savepath + '/%s.tar' %(model.get_save_header()))
+
+    return 
+
 @hydra.main(version_base=None, config_path='./conf', config_name='config')
 def main(cfg: DictConfig) -> None:
-    # print('Rank %d, local rank %d, which has device %s. Sees %d devices.' %(RANK,int(LOCAL_RANK),DEVICE,torch.cuda.device_count()))
+    print('Rank %d, local rank %d, which has device %s. Sees %d devices.' %(RANK,int(LOCAL_RANK),DEVICE,torch.cuda.device_count()))
     if RANK == 0:
         print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
         print('INPUTS:')
         print(OmegaConf.to_yaml(cfg)) 
         print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
 
-    train(cfg)
+    if cfg.profile: 
+        train_profile(cfg)
+    else: 
+        train(cfg)
+
+    #halo_test(cfg)
+    
     cleanup()
 
 if __name__ == '__main__':
