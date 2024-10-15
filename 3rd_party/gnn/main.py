@@ -66,6 +66,7 @@ log = logging.getLogger(__name__)
 Tensor = torch.Tensor
 TORCH_FLOAT_DTYPE = torch.float32
 NP_FLOAT_DTYPE = np.float32
+SMALL = 1e-12
 
 # Get MPI:
 if WITH_DDP:
@@ -170,6 +171,12 @@ def metric_max(val: Tensor):
     if (WITH_DDP):
         dist.all_reduce(val, op=dist.ReduceOp.MAX)
     return val
+
+def all_gather_tensor(tensor_list: list[Tensor], tensor_local: Tensor):
+    if (WITH_DDP):
+        dist.all_gather(tensor_list, tensor_local)
+        return tensor_list
+    return [tensor_local]
 
 def trace_handler(p):
     output = p.key_averages().table(sort_by="self_cuda_time", row_limit=20)
@@ -326,7 +333,7 @@ class Trainer:
 
         # ~~~~ Setup train_step timers 
         self.timer_step = 0
-        self.timer_step_max = self.cfg.epochs
+        self.timer_step_max = 100
         self.timers = self.setup_timers(self.timer_step_max)
         self.timers_max = self.setup_timers(self.timer_step_max)
         self.timers_min = self.setup_timers(self.timer_step_max)
@@ -661,7 +668,7 @@ class Trainer:
         device_for_loading = 'cpu'
 
         # data directory
-        dtfac = 100
+        dtfac = 10
         data_dir = self.cfg.traj_data_path + f"/tinit_75.000000_dtfactor_{dtfac}/data_rank_{RANK}_size_{SIZE}"
 
         # read files and remove pressure
@@ -708,6 +715,42 @@ class Trainer:
 
         if RANK == 0: log.info(f"Number of training snapshots: {len(idx_train)}")
         if RANK == 0: log.info(f"Number of validation snapshots: {len(idx_valid)}")
+
+        # Get training data statistics: mean and standard deviation for each feature  
+        n_features = data_traj_train[0]['x'].shape[1]
+        n_nodes_local = self.data_reduced.n_nodes_local
+        n_snaps = len(data_traj_train)
+        x_full = torch.zeros((n_snaps, n_nodes_local, n_features), dtype=TORCH_FLOAT_DTYPE)
+        for i in range(len(data_traj_train)):
+            x_full[i,:,:] = data_traj_train[i]['x'][:n_nodes_local, :]
+        data_mean_ = x_full.mean(axis=(0,1)).to(self.device)
+        data_var_ = x_full.var(axis=(0,1)).to(self.device)
+        n_scale_ = torch.tensor([n_nodes_local * n_snaps], dtype=TORCH_FLOAT_DTYPE, device=self.device)
+
+        data_mean_gather = [torch.zeros(n_features, dtype=TORCH_FLOAT_DTYPE, device=self.device) for _ in range(SIZE)]
+        data_mean_gather = all_gather_tensor(data_mean_gather, data_mean_) 
+
+        data_var_gather = [torch.zeros(n_features, dtype=TORCH_FLOAT_DTYPE, device=self.device) for _ in range(SIZE)]
+        data_var_gather = all_gather_tensor(data_var_gather, data_var_)
+
+        n_scale_gather = [torch.zeros(1, dtype=TORCH_FLOAT_DTYPE, device=self.device) for _ in range(SIZE)]
+        n_scale_gather = all_gather_tensor(n_scale_gather, n_scale_)
+
+        data_mean_gather = torch.stack(data_mean_gather)
+        data_var_gather = torch.stack(data_var_gather)
+        n_scale_gather = torch.stack(n_scale_gather)
+
+        # final mean: 
+        data_mean = torch.sum(n_scale_gather * data_mean_gather, axis=0)/torch.sum(n_scale_gather)
+        data_mean = data_mean.unsqueeze(0)
+            
+        # final std:
+        num_1 = torch.sum(n_scale_gather * data_var_gather, axis=0) # n_i * var_i
+        num_2 = torch.sum(n_scale_gather * (data_mean_gather - data_mean)**2, axis=0)
+        data_var = (num_1 + num_2)/torch.sum(n_scale_gather)
+        data_std = torch.sqrt(data_var)
+        data_std = data_std.unsqueeze(0)
+        if RANK == 0: log.info(f"Computed training data statistics for each feature.")
 
         # Get data in reduced format (non-overlapping)
         pos_reduced = self.data_reduced.pos
@@ -795,6 +838,10 @@ class Trainer:
                 'loader': test_loader,
                 'example': data_traj_valid[0],
             },
+            'stats': {
+                'mean': data_mean,
+                'std': data_std,
+            },
             'graph': data_graph
         }
 
@@ -829,8 +876,8 @@ class Trainer:
             self.timers_avg[key][i] = t_avg #metric_average(torch.tensor( self.timers[key][i] )).item()
             self.timers_min[key][i] = t_min #metric_min(torch.tensor( self.timers[key][i] )).item()
             self.timers_max[key][i] = t_max #metric_max(torch.tensor( self.timers[key][i] )).item()
-            if RANK == 0:
-                log.info(f"t_{key} [min,max,avg] = [{self.timers_min[key][i]},{self.timers_max[key][i]},{self.timers_avg[key][i]}]") 
+            #if RANK == 0:
+            #    log.info(f"t_{key} [min,max,avg] = [{self.timers_min[key][i]},{self.timers_max[key][i]},{self.timers_avg[key][i]}]") 
         return
 
     def collect_timer_stats(self) -> None:
@@ -865,6 +912,7 @@ class Trainer:
     def train_step(self, data: DataBatch) -> Tensor:
         loss = torch.tensor([0.0])
         graph = self.data['graph']
+        stats = self.data['stats']
         self.timers['dataTransfer'][self.timer_step] = time.time()
         if WITH_CUDA or WITH_XPU:
             data['x'] = data['x'].to(self.device)
@@ -898,7 +946,8 @@ class Trainer:
         # Prediction
         self.timers['forwardPass'][self.timer_step] = time.time()
         #log.info(f"[RANK {RANK}] -- in forward pass.")
-        out_gnn = self.model(x = data['x'][0],
+        x_scaled = (data['x'][0] - stats['mean'])/(stats['std'] + SMALL)
+        out_gnn = self.model(x = x_scaled,
                              edge_index = graph.edge_index,
                              edge_attr = graph.edge_attr,
                              edge_weight = graph.edge_weight,
@@ -914,7 +963,7 @@ class Trainer:
 
         # Accumulate loss
         self.timers['loss'][self.timer_step] = time.time()
-        target = data['y'][0]
+        target = (data['y'][0] - stats['mean'])/(stats['std'] + SMALL)
         n_nodes_local = graph.n_nodes_local
         if SIZE == 1:
             loss = self.loss_fn(out_gnn[:n_nodes_local], target[:n_nodes_local])
@@ -942,6 +991,7 @@ class Trainer:
 
         # Update timers 
         if self.timer_step < self.timer_step_max - 1:
+            self.update_timers()
             self.timer_step += 1
         return loss 
 
@@ -1013,7 +1063,67 @@ class Trainer:
         with torch.no_grad():
             for data in test_loader:
                 loss = torch.tensor([0.0])
-                
+                graph = self.data['graph']
+                stats = self.data['stats']
+        
+                if WITH_CUDA or WITH_XPU:
+                    data['x'] = data['x'].to(self.device)
+                    data['y'] = data['y'].to(self.device)
+                    graph.edge_index = graph.edge_index.to(self.device)
+                    graph.edge_weight = graph.edge_weight.to(self.device)
+                    graph.edge_attr = graph.edge_attr.to(self.device)
+                    graph.batch = graph.batch.to(self.device) if graph.batch is not None else None
+                    graph.halo_info = graph.halo_info.to(self.device)
+                    graph.node_degree = graph.node_degree.to(self.device)
+                    loss = loss.to(self.device)
+
+
+                # re-allocate send buffer
+                self.timers['bufferInit'][self.timer_step] = time.time()
+                if self.cfg.halo_swap_mode != 'none':
+                    for i in range(SIZE):
+                        if self.cfg.halo_swap_mode == "all_to_all_opt_intel":
+                            self.buffer_send[i] = torch.zeros_like(self.buffer_send[i])
+                            self.buffer_recv[i] = torch.zeros_like(self.buffer_recv[i])
+                        else:
+                            self.buffer_send[i] = torch.empty_like(self.buffer_send[i])
+                            self.buffer_recv[i] = torch.empty_like(self.buffer_recv[i])
+                else:
+                    buffer_send = None
+                    buffer_recv = None
+
+                x_scaled = (data['x'][0] - stats['mean'])/(stats['std'] + SMALL)
+                out_gnn = self.model(x = x_scaled,
+                             edge_index = graph.edge_index,
+                             edge_attr = graph.edge_attr,
+                             edge_weight = graph.edge_weight,
+                             halo_info = graph.halo_info,
+                             mask_send = self.mask_send,
+                             mask_recv = self.mask_recv,
+                             buffer_send = self.buffer_send,
+                             buffer_recv = self.buffer_recv,
+                             neighboring_procs = self.neighboring_procs,
+                             SIZE = SIZE,
+                             batch = graph.batch)   
+       
+                # Accumulate loss
+                target = (data['y'][0] - stats['mean'])/(stats['std'] + SMALL)
+                n_nodes_local = graph.n_nodes_local
+                if SIZE == 1:
+                    loss = self.loss_fn(out_gnn[:n_nodes_local], target[:n_nodes_local])
+                    effective_nodes = n_nodes_local 
+                else: # custom 
+                    n_output_features = out_gnn.shape[1]
+                    squared_errors_local = torch.pow(out_gnn[:n_nodes_local] - target[:n_nodes_local], 2)
+                    squared_errors_local = squared_errors_local/graph.node_degree[:n_nodes_local].unsqueeze(-1)
+
+                    sum_squared_errors_local = squared_errors_local.sum()
+                    effective_nodes_local = torch.sum(1.0/graph.node_degree[:n_nodes_local])
+
+                    effective_nodes = distnn.all_reduce(effective_nodes_local)
+                    sum_squared_errors = distnn.all_reduce(sum_squared_errors_local)
+                    loss = (1.0/(effective_nodes*n_output_features)) * sum_squared_errors
+
                 running_loss += loss.item()
                 count += 1
 
@@ -1077,31 +1187,35 @@ def train(cfg: DictConfig) -> None:
         trainer.loss_hist_train[epoch-1] = train_metrics["loss"]
        
         epoch_time = t1-t0 
-        if epoch>trainer.epoch_start+1:
-            epoch_times.append(epoch_time)
-            epoch_throughput.append(n_nodes_local/epoch_time)
-            batch_times.extend(train_metrics['batch_times'])
-            batch_throughput.extend([n_nodes_local/time for time in train_metrics['batch_times']])
+
+        # ~~~~ fill summary stats
+        epoch_times.append(epoch_time)
+        epoch_throughput.append(n_nodes_local/epoch_time)
+        batch_times.extend(train_metrics['batch_times'])
+        batch_throughput.extend([n_nodes_local/time for time in train_metrics['batch_times']])
 
         # ~~~~ Validation step
-        #test_metrics = trainer.test()
-        test_metrics = {"loss": torch.tensor(0.)}
+        t0 = time.time()
+        test_metrics = trainer.test()
+        t1 = time.time()
+        test_time = t1-t0
         trainer.loss_hist_test[epoch-1] = test_metrics["loss"]
         
         # ~~~~ Printing
         if RANK == 0:
-            #sepstr = '-' * len(astr)
-            #log.info(sepstr)
-            #log.info(sepstr)
-            summary = '  '.join([
+            summary_train = '  '.join([
                 '[TRAIN]',
                 f'loss={train_metrics["loss"]:.4e}',
                 f'epoch_time={epoch_time:.4g} sec'
             ])
-            log.info(summary)
-            astr = f'[TEST] loss={test_metrics["loss"]:.4e}'
-            log.info(astr)
-            log.info((sep := '-' * len(summary)))
+            summary_test = '  '.join([
+                ' [TEST]',
+                f'loss={test_metrics["loss"]:.4e}',
+                f'test_time={test_time:.4g} sec'
+            ])
+            log.info((sep := '-' * len(summary_train)))
+            log.info(summary_train)
+            log.info(summary_test)
             log.info(sep)
 
         # ~~~~ Step scheduler based on validation loss
@@ -1135,40 +1249,40 @@ def train(cfg: DictConfig) -> None:
 
     end = time.time()
 
-    # # ~~~ Print times
-    # epoch_stats = collect_list_times(epoch_times)
-    # epoch_throughput_stats = collect_list_times(epoch_throughput)
-    # batch_stats = collect_list_times(batch_times)
-    # batch_throughput_stats = collect_list_times(batch_throughput)
-    # total_epoch_throughput = average_list_times(epoch_throughput)
-    # total_batch_throughput = average_list_times(batch_throughput)
-    # trainer.collect_timer_stats()
-    # if RANK == 0:
-    #     log.info(f'\nPerformance data averaged over {SIZE} ranks, {len(epoch_times)} epochs and {len(batch_times)} iterations:')
-    #     log.info(f'Total training time: {end - start}')
-    #     stats_string = f": min = {epoch_stats['min'][0]:>6e} , " + \
-    #                        f"max = {epoch_stats['max'][0]:>6e} , " + \
-    #                        f"avg = {epoch_stats['avg']:>6e} , " + \
-    #                        f"std = {epoch_stats['std']:>6e} "
-    #     log.info(f"Training epoch [s] " + stats_string)
-    #     stats_string = f": min = {epoch_throughput_stats['min'][0]:>6e} , " + \
-    #                        f"max = {epoch_throughput_stats['max'][0]:>6e} , " + \
-    #                        f"avg = {epoch_throughput_stats['avg']:>6e} , " + \
-    #                        f"std = {epoch_throughput_stats['std']:>6e} "
-    #     log.info(f"Training throughput [nodes/s] " + stats_string)
-    #     log.info(f"Average parallel training throughout [nodes/s] : {total_epoch_throughput:>6e}")
-    #     stats_string = f": min = {batch_stats['min'][0]:>6e} , " + \
-    #                        f"max = {batch_stats['max'][0]:>6e} , " + \
-    #                        f"avg = {batch_stats['avg']:>6e} , " + \
-    #                        f"std = {batch_stats['std']:>6e} "
-    #     log.info(f"Training batch [s] " + stats_string)
-    #     stats_string = f": min = {batch_throughput_stats['min'][0]:>6e} , " + \
-    #                        f"max = {batch_throughput_stats['max'][0]:>6e} , " + \
-    #                        f"avg = {batch_throughput_stats['avg']:>6e} , " + \
-    #                        f"std = {batch_throughput_stats['std']:>6e} "
-    #     log.info(f"Training batch throughput [nodes/s] " + stats_string)
-    #     log.info(f"Average parallel training batch throughout [nodes/s] : {total_batch_throughput:>6e}")
-    #     trainer.print_timer_stats()
+    # ~~~ Print times
+    epoch_stats = collect_list_times(epoch_times[1:])
+    epoch_throughput_stats = collect_list_times(epoch_throughput[1:])
+    batch_stats = collect_list_times(batch_times[1:])
+    batch_throughput_stats = collect_list_times(batch_throughput[1:])
+    total_epoch_throughput = average_list_times(epoch_throughput)
+    total_batch_throughput = average_list_times(batch_throughput)
+    trainer.collect_timer_stats()
+    if RANK == 0:
+        log.info(f'\nPerformance data averaged over {SIZE} ranks, {len(epoch_times)} epochs and {len(batch_times)} iterations:')
+        log.info(f'Total training time: {end - start}')
+        stats_string = f": min = {epoch_stats['min'][0]:>6e} , " + \
+                           f"max = {epoch_stats['max'][0]:>6e} , " + \
+                           f"avg = {epoch_stats['avg']:>6e} , " + \
+                           f"std = {epoch_stats['std']:>6e} "
+        log.info(f"Training epoch [s] " + stats_string)
+        stats_string = f": min = {epoch_throughput_stats['min'][0]:>6e} , " + \
+                           f"max = {epoch_throughput_stats['max'][0]:>6e} , " + \
+                           f"avg = {epoch_throughput_stats['avg']:>6e} , " + \
+                           f"std = {epoch_throughput_stats['std']:>6e} "
+        log.info(f"Training throughput [nodes/s] " + stats_string)
+        log.info(f"Average parallel training throughout [nodes/s] : {total_epoch_throughput:>6e}")
+        stats_string = f": min = {batch_stats['min'][0]:>6e} , " + \
+                           f"max = {batch_stats['max'][0]:>6e} , " + \
+                           f"avg = {batch_stats['avg']:>6e} , " + \
+                           f"std = {batch_stats['std']:>6e} "
+        log.info(f"Training batch [s] " + stats_string)
+        stats_string = f": min = {batch_throughput_stats['min'][0]:>6e} , " + \
+                           f"max = {batch_throughput_stats['max'][0]:>6e} , " + \
+                           f"avg = {batch_throughput_stats['avg']:>6e} , " + \
+                           f"std = {batch_throughput_stats['std']:>6e} "
+        log.info(f"Training batch throughput [nodes/s] " + stats_string)
+        log.info(f"Average parallel training batch throughout [nodes/s] : {total_batch_throughput:>6e}")
+        trainer.print_timer_stats()
     
  
     if RANK == 0:
