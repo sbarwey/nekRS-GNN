@@ -33,7 +33,7 @@ public:
     ~gnn_t(); 
 
     // member functions 
-    void gnnSetup();
+    void gnnSetup(bool multiscale=false);
     void gnnWrite();
 
     // where gnn output files are written, if "write=True". 
@@ -67,6 +67,7 @@ private:
     // member functions 
     void get_graph_nodes();
     void get_graph_nodes_element();
+    void add_p1_neighbors();
     void get_global_node_index();
     void get_node_positions();
     void get_node_element_ids();

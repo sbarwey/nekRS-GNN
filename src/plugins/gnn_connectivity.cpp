@@ -34,6 +34,61 @@ void gnn_t::get_graph_nodes_element()
     }
 }
 
+void gnn_t::add_p1_neighbors()
+{
+    if (verbose) printf("[RANK %d] -- in add_p1_neighbors() \n", rank);
+
+    // Loop through all nodes 
+    int node_cnt = 0;
+    int Nq = mesh->Nq; // (Nq = poly_order + 1)
+    int n_vertex_nodes = 8; // number of vertex (p=1) nodes 
+    for (int e = 0; e < mesh->Nelements; e++)
+    {
+        for (int k = 0; k < Nq; k++)
+        {
+            for (int j = 0; j < Nq; j++)
+            {
+                for (int i = 0; i < Nq; i++)
+                {
+                    dlong idx = i + j * Nq + k * Nq * Nq; // local element node index  
+                    dlong idx_own, idx_nei; 
+                    idx_own = e * mesh->Np + idx; // index of the graph node 
+
+                    // outer loop through vertex nodes 
+                    for (int v = 0; v < n_vertex_nodes; v++)
+                    {
+                        int idx_vertex = mesh->vertexNodes[v];
+                        if (idx == idx_vertex)
+                        {
+                            // inner loop through vertex nodes 
+                            for (int w = 0; w < n_vertex_nodes; w++)
+                            {
+                                idx_nei = e * mesh->Np + mesh->vertexNodes[w];
+                                graphNodes[node_cnt].nbrIds.push_back(idx_nei);
+                                num_edges += 1;
+                            }
+                        }
+                    }
+                    // accumulate node_cnt
+                    node_cnt += 1;
+                }
+            }
+        }
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
 void gnn_t::get_graph_nodes()
 {
 	if (verbose) printf("[RANK %d] -- in get_graph_nodes() \n", rank);

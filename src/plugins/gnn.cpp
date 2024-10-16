@@ -87,13 +87,26 @@ gnn_t::~gnn_t()
     free(graphNodes_element);
 }
 
-void gnn_t::gnnSetup()
+void gnn_t::gnnSetup(bool multiscale)
 {
     if (verbose) printf("[RANK %d] -- in gnnSetup() \n", rank);
+
+    // do not use multiscale flag if mesh is p=1    
+    int poly_order = mesh->Nq - 1; 
+    if (poly_order == 1)
+    {
+        multiscale = false;
+    }
+    if (multiscale)
+    {
+        if (verbose) printf("[RANK %d] -- using multiscale flag \n", rank);
+    }
+
     get_graph_nodes(); // populates graphNodes
+    if (multiscale) add_p1_neighbors(); // adds additional edges on mesh nodes (p=1)  
     get_graph_nodes_element(); // populates graphNodes_element
     get_node_positions();
-    get_node_element_ids(); // adds neighboring edges to graphNodes
+    get_node_element_ids(); 
     get_node_masks();
 
     // output directory 
@@ -104,6 +117,7 @@ void gnn_t::gnnSetup()
         writePath = currentPath.string();
         int poly_order = mesh->Nq - 1; 
         writePath = writePath + "_poly_" + std::to_string(poly_order);
+        if (multiscale) writePath = writePath + "_multiscale";
         if (rank == 0)
         {
             if (!std::filesystem::exists(writePath))
