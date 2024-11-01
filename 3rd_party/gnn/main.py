@@ -575,7 +575,11 @@ class Trainer:
         if self.cfg.verbose: log.info('[RANK %d]: Loading positions and global node index' %(RANK))
         pos = np.fromfile(path_to_pos_full + ".bin", dtype=np.float64).reshape((-1,3))
         pos = pos.astype(NP_FLOAT_DTYPE)
-        pos = np.cos(pos) # cos positional encoding (for periodic case)
+
+        # We are only periodic in z for the BFS. so we do the following:  
+        L_z = 2. 
+        # pos[:,2] = np.cos(2.*np.pi*pos[:,2]/L_z) # cosine
+        pos[:,2] = np.abs((pos[:,2] % L_z) - L_z / 2) # piecewise linear 
 
         gli = np.fromfile(path_to_glob_ids + ".bin", dtype=np.int64).reshape((-1,1))
 
@@ -675,7 +679,7 @@ class Trainer:
         files_temp = os.listdir(data_dir)
         files = [item for item in files_temp if 'p_step' not in item] 
         files.sort(key=lambda x:int(x.split('_')[-1].split('.')[0]))
-        
+
         # populate dataset for single-step predictions 
         idx = list(range(len(files)))
         idx_x = idx[:-1]
@@ -945,7 +949,6 @@ class Trainer:
         
         # Prediction
         self.timers['forwardPass'][self.timer_step] = time.time()
-        #log.info(f"[RANK {RANK}] -- in forward pass.")
         x_scaled = (data['x'][0] - stats['mean'])/(stats['std'] + SMALL)
         out_gnn = self.model(x = x_scaled,
                              edge_index = graph.edge_index,
@@ -1219,7 +1222,7 @@ def train(cfg: DictConfig) -> None:
             log.info(sep)
 
         # ~~~~ Step scheduler based on validation loss
-        # trainer.scheduler.step(test_metrics["loss"]) # SB: toggle scheduler
+        trainer.scheduler.step(test_metrics["loss"]) # SB: toggle scheduler
 
         # ~~~~ Checkpointing step 
         if epoch % cfg.ckptfreq == 0 and RANK == 0:
