@@ -674,6 +674,7 @@ class Trainer:
         # data directory
         dtfac = 10
         data_dir = self.cfg.traj_data_path + f"/tinit_75.000000_dtfactor_{dtfac}/data_rank_{RANK}_size_{SIZE}"
+        #data_dir = self.cfg.traj_data_path + f"/tinit_85.000000_dtfactor_{dtfac}/data_rank_{RANK}_size_{SIZE}"
 
         # read files and remove pressure
         files_temp = os.listdir(data_dir)
