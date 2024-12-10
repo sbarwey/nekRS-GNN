@@ -6,6 +6,7 @@ import os
 import sys
 import socket
 import logging
+from collections import deque
 from typing import Optional, Union, Callable
 import numpy as np
 import hydra
@@ -206,6 +207,54 @@ def average_list_times(a_list):
     avg = np.mean(sum_across_ranks)
     return avg
 
+class ScheduledOptim():
+    '''A simple wrapper class for learning rate scheduling'''
+    def __init__(self, optimizer, n_phase1_steps, n_phase2_steps, n_phase3_steps, lr_phase12, lr_phase23):
+        self._optimizer = optimizer
+        self.n_phase1_steps = n_phase1_steps
+        self.n_phase2_steps = n_phase2_steps
+        self.n_phase3_steps = n_phase3_steps
+        self.lr_phase12 = lr_phase12
+        self.lr_phase23 = lr_phase23
+        self.n_steps = 0 
+
+    def step_and_update_lr(self):
+        "Step with the inner optimizer"
+        self._update_learning_rate()
+        self._optimizer.step()
+
+    def reset_n_steps(self, step):
+        "Manually set the current training step (useful when restarting)" 
+        self.n_steps = step  
+
+    def zero_grad(self):
+        "Zero out the gradients with the inner optimizer"
+        self._optimizer.zero_grad()
+
+    def _get_lr(self):
+        if self.n_steps < self.n_phase1_steps:
+            # Phase 1: Linear ramp from 0 to lr_phase12
+            lr = (self.n_steps / self.n_phase1_steps) * self.lr_phase12
+
+        elif self.n_steps < (self.n_phase1_steps + self.n_phase2_steps):
+            # Phase 2: Half-cosine decay from lr_phase12 down to lr_phase23
+            p = (self.n_steps - self.n_phase1_steps) / self.n_phase2_steps  # progress in [0, 1]
+            lr = self.lr_phase23 + (self.lr_phase12 - self.lr_phase23) * ((np.cos(np.pi * p) + 1.) / 2.) 
+
+        else:
+            # Phase 3: Constant at lr_phase23
+            lr = self.lr_phase23
+        return lr
+
+    def _update_learning_rate(self):
+        ''' Learning rate scheduling per step '''
+
+        self.n_steps += 1
+        lr = self._get_lr()
+
+        for param_group in self._optimizer.param_groups:
+            param_group['lr'] = lr
+
 class Trainer:
     def __init__(self, cfg: DictConfig, scaler: Optional[GradScaler] = None):
         self.cfg = cfg
@@ -262,11 +311,12 @@ class Trainer:
         self.model.to(TORCH_FLOAT_DTYPE)
         if RANK == 0: log.info('Done with build_model')
 
+        # ~~~~ Set the total number of training iterations 
+        self.total_iterations = self.cfg.phase1_steps + self.cfg.phase2_steps + self.cfg.phase3_steps
+
         # ~~~~ Init training and testing loss history 
-        self.loss_hist_train = np.zeros(self.cfg.epochs)
-        self.loss_hist_test = np.zeros(self.cfg.epochs)
-        self.loss_hist_train_iter = np.zeros(100000)
-        self.loss_hist_test_iter = np.zeros(100000)
+        self.loss_hist_train = np.zeros(self.total_iterations)
+        self.loss_hist_test = np.zeros(self.total_iterations)
 
         # ~~~~ Set model and checkpoint savepaths 
         try:
@@ -277,22 +327,17 @@ class Trainer:
             self.model_path = cfg.model_dir + 'model.tar'
 
         # ~~~~ Load model parameters if we are restarting from checkpoint
-        self.epoch = 0
-        self.epoch_start = 1
-        self.training_iter = 0
+        self.iteration = 0
         if self.cfg.restart:
             ckpt = torch.load(self.ckpt_path)
             self.model.load_state_dict(ckpt['model_state_dict'])
-            self.epoch_start = ckpt['epoch'] + 1
-            self.epoch = self.epoch_start
-            self.training_iter = ckpt['training_iter']
-
+            self.iteration = ckpt['iteration'] + 1
             self.loss_hist_train = ckpt['loss_hist_train']
             self.loss_hist_test = ckpt['loss_hist_test']
 
-            if len(self.loss_hist_train) < self.cfg.epochs:
-                loss_hist_train_new = np.zeros(self.cfg.epochs)
-                loss_hist_test_new = np.zeros(self.cfg.epochs)
+            if len(self.loss_hist_train) < self.total_iterations:
+                loss_hist_train_new = np.zeros(self.total_iterations)
+                loss_hist_test_new = np.zeros(self.total_iterations)
 
                 loss_hist_train_new[:len(self.loss_hist_train)] = self.loss_hist_train
                 loss_hist_test_new[:len(self.loss_hist_test)] = self.loss_hist_test
@@ -305,26 +350,28 @@ class Trainer:
         if WITH_CUDA or WITH_XPU:
             self.loss_fn.to(self.device)
 
-        # ~~~~ Set optimizer 
+        # ~~~~ Set optimizer
         self.optimizer = self.build_optimizer(self.model)
 
-        # ~~~~ Set scheduler 
-        self.scheduler = self.build_scheduler(self.optimizer)
-
-        # ~~~~ Load optimizer+scheduler parameters if we are restarting from checkpoint
+        # ~~~~ Load optimizer parameters if we are restarting from checkpoint
         if self.cfg.restart:
             self.optimizer.load_state_dict(ckpt['optimizer_state_dict'])
-            self.scheduler.load_state_dict(ckpt['scheduler_state_dict'])
             if RANK == 0:
-                astr = 'RESTARTING FROM CHECKPOINT -- STATE AT EPOCH %d/%d' %(self.epoch_start-1, self.cfg.epochs)
-                sepstr = '-' * len(astr)
-                log.info(sepstr)
+                astr = 'Restarting from checkpoint -- Iteration %d/%d' %(self.iteration, self.total_iterations)
                 log.info(astr)
-                log.info(sepstr)
         
         # ~~~ IPEX optimizations
         if WITH_XPU:
             self.model, self.optimizer = ipex.optimize(self.model, optimizer=self.optimizer)
+
+        # ~~~~ Set scheduler:
+        self.s_optimizer = ScheduledOptim(self.optimizer, 
+                                          self.cfg.phase1_steps, 
+                                          self.cfg.phase2_steps, 
+                                          self.cfg.phase3_steps, 
+                                          self.cfg.lr_phase12, 
+                                          self.cfg.lr_phase23)
+        self.s_optimizer.reset_n_steps(self.iteration)
 
         # ~~~~ Wrap model in DDP
         if WITH_DDP and SIZE > 1:
@@ -338,6 +385,58 @@ class Trainer:
         self.timers_max = self.setup_timers(self.timer_step_max)
         self.timers_min = self.setup_timers(self.timer_step_max)
         self.timers_avg = self.setup_timers(self.timer_step_max)
+
+    def checkpoint(self):
+        if RANK == 0:
+            t_ckpt = time.time()
+
+            if not os.path.exists(self.cfg.ckpt_dir):
+                os.makedirs(self.cfg.ckpt_dir)
+
+            if WITH_DDP and SIZE > 1:
+                sd = self.model.module.state_dict()
+            else:
+                sd = self.model.state_dict()
+            ckpt = {'iteration' : self.iteration,
+                    'model_state_dict' : sd,
+                    'optimizer_state_dict' : self.optimizer.state_dict(),
+                    'loss_hist_train' : self.loss_hist_train,
+                    'loss_hist_test' : self.loss_hist_test}
+            torch.save(ckpt, self.ckpt_path)
+            t_ckpt = time.time() - t_ckpt
+
+            astr = f"Checkpointing ({t_ckpt:.4g} sec)"
+            sepstr = '-' * len(astr)
+            log.info(sepstr)
+            log.info(astr)
+
+        dist.barrier()
+
+    def save_model(self):
+        if RANK == 0:
+            astr = f"Finished training. Saving model to {self.model_path}."
+            log.info(astr)
+            if WITH_CUDA or WITH_XPU:
+                self.model.to('cpu')
+            if not os.path.exists(self.cfg.model_dir):
+                os.makedirs(self.cfg.model_dir)
+
+            if WITH_DDP and SIZE > 1:
+                sd = self.model.module.state_dict()
+                ind = self.model.module.input_dict()
+            else:
+                sd = self.model.state_dict()
+                ind = self.model.input_dict()
+
+            save_dict = {
+                        'state_dict' : sd,
+                        'input_dict' : ind,
+                        'loss_hist_train' : self.loss_hist_train,
+                        'loss_hist_test' : self.loss_hist_test,
+                        'iteration' : self.iteration,
+                        }
+            torch.save(save_dict, self.model_path)
+
 
     def build_model(self) -> nn.Module:
         if RANK == 0:
@@ -363,7 +462,8 @@ class Trainer:
         n_mlp_hidden_layers = self.cfg.n_mlp_hidden_layers
         n_messagePassing_layers = self.cfg.n_messagePassing_layers
         halo_swap_mode = self.cfg.halo_swap_mode
-        name = 'POLY_%d_RANK_%d_SIZE_%d_SEED_%d' %(poly,RANK,SIZE,self.cfg.seed)
+        #name = 'POLY_%d_RANK_%d_SIZE_%d_SEED_%d' %(poly,RANK,SIZE,self.cfg.seed)
+        name = 'POLY_%d_SIZE_%d_SEED_%d' %(poly,SIZE,self.cfg.seed)
 
         model = gnn.DistributedGNN(input_node_channels,
                            input_edge_channels,
@@ -373,23 +473,14 @@ class Trainer:
                            n_messagePassing_layers,
                            halo_swap_mode,
                            name)
-
-
         return model
 
     def count_weights(self, model) -> int:
-        """ Count the number of trainable parameters in the model
-        """
         n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
         return n_params
 
     def build_optimizer(self, model: nn.Module) -> torch.optim.Optimizer:
-        """
-        DDP: scale learning rate by the number of GPUs
-        """
-        optimizer = optim.Adam(model.parameters(),
-                               lr=self.cfg.lr_init)
-
+        optimizer = optim.Adam(model.parameters(), lr=0.0)
         return optimizer
 
     def build_scheduler(self, optimizer: torch.optim.Optimizer) -> torch.optim.lr_scheduler:
@@ -580,7 +671,6 @@ class Trainer:
         L_z = 2. 
         # pos[:,2] = np.cos(2.*np.pi*pos[:,2]/L_z) # cosine
         pos[:,2] = np.abs((pos[:,2] % L_z) - L_z / 2) # piecewise linear 
-
         gli = np.fromfile(path_to_glob_ids + ".bin", dtype=np.int64).reshape((-1,1))
 
         # ~~~~ Get edge index
@@ -931,7 +1021,7 @@ class Trainer:
             loss = loss.to(self.device)
         self.timers['dataTransfer'][self.timer_step] = time.time() - self.timers['dataTransfer'][self.timer_step]
                 
-        self.optimizer.zero_grad()
+        self.s_optimizer.zero_grad()
 
         # re-allocate send buffer 
         self.timers['bufferInit'][self.timer_step] = time.time()
@@ -990,7 +1080,7 @@ class Trainer:
         self.timers['backwardPass'][self.timer_step] = time.time() - self.timers['backwardPass'][self.timer_step]
 
         self.timers['optimizerStep'][self.timer_step] = time.time()
-        self.optimizer.step()
+        self.s_optimizer.step_and_update_lr()
         self.timers['optimizerStep'][self.timer_step] = time.time() - self.timers['optimizerStep'][self.timer_step]
 
         # Update timers 
@@ -998,62 +1088,6 @@ class Trainer:
             self.update_timers()
             self.timer_step += 1
         return loss 
-
-    def train_epoch(self, epoch: int) -> dict:
-        self.model.train()
-        train_loader = self.data['train']['loader']
-        num_batches = torch.tensor(len(train_loader))
-        batch_times = []
-        running_loss = torch.tensor([0.], device=self.device)
-        #count = torch.tensor(0.)
-
-        #if WITH_CUDA or WITH_XPU:
-        #    running_loss = running_loss.to(self.device)
-        #    #count = count.to(self.device)
-        #    num_batches_gpu = num_batches.to(self.device)
-
-        #train_sampler = self.data['train']['sampler']
-        #train_sampler.set_epoch(epoch)
-
-        for bidx, data in enumerate(train_loader):
-            start = time.time()
-            loss = self.train_step(data)
-            self.loss_hist_train_iter[self.training_iter] = loss.item()
-            running_loss += loss
-            t_batch = time.time() - start
-            batch_times.append(t_batch)
-            #count += 1 # accumulate current batch count
-            self.training_iter += 1 # accumulate total training iteration
-
-            # Log on Rank 0:
-            if bidx % self.cfg.logfreq == 0 and RANK == 0:
-                metrics = {
-                    'epoch': epoch,
-                    'time[s]': t_batch,
-                    'batch_loss': loss.item(),
-                    'running_loss': running_loss.item(),
-                }
-                pre = [
-                    f'[{RANK}]',
-                    (   # looks like: [num_processed/total (% complete)]
-                        f'[{epoch}/{self.cfg.epochs}:'
-                        f' Batch {bidx+1}'
-                        f' ({100. * (bidx+1) / num_batches:.0f}%)]'
-                    ),
-                ]
-                log.info(' '.join([
-                    *pre, *[f'{k}={v:.4f}' for k, v in metrics.items()]
-                ]))
-
-        # divide running loss by number of batches
-        #running_loss = running_loss / count
-        #running_loss = running_loss / num_batches_gpu
-        self.timers['collectives'][self.timer_step-1] = time.time()
-        loss_avg = metric_average(running_loss)
-        self.timers['collectives'][self.timer_step-1] = time.time() - self.timers['collectives'][self.timer_step-1]
-        loss_avg = loss_avg.item() / num_batches
-
-        return {'loss': loss_avg, 'batch_times': batch_times}
 
     def test(self) -> dict:
         running_loss = torch.tensor(0.)
@@ -1145,8 +1179,6 @@ class Trainer:
         else:
             model = self.model.module
 
-        log.info(f"[RANK {RANK}] -- model save header : {model.get_save_header()}")
-
         # if path doesnt exist, make it 
         savepath = self.cfg.work_dir + "/outputs/GraphStatistics/weak_scaling" 
         if RANK == 0:
@@ -1173,147 +1205,63 @@ class Trainer:
         return 
 
 def train(cfg: DictConfig) -> None:
-    start = time.time()
     trainer = Trainer(cfg)
     trainer.writeGraphStatistics()
-    epoch_times = []
-    batch_times = []
-    epoch_throughput = []
-    batch_throughput = []
     n_nodes_local = trainer.data_reduced.n_nodes_local.item()
 
-    for epoch in range(trainer.epoch_start, cfg.epochs+1):
-        # ~~~~ Training step 
-        t0 = time.time()
-        trainer.epoch = epoch
-        train_metrics = trainer.train_epoch(epoch)
-        t1 = time.time()
-        trainer.loss_hist_train[epoch-1] = train_metrics["loss"]
-       
-        epoch_time = t1-t0 
+    # Training loop: 
+    trainer.model.train()
+    train_loader = trainer.data['train']['loader']
+    test_loader = trainer.data['test']['loader']
+    num_batches = torch.tensor(len(train_loader))
+    batch_times = []
+    loss_window = deque(maxlen=10)
+    while True: 
+        for bidx, data in enumerate(train_loader):
+            t_step = time.time()
+            loss = trainer.train_step(data)
+            t_step = time.time() - t_step 
+            loss_window.append(loss.item())
+            running_loss = sum(loss_window) / len(loss_window)
+            trainer.iteration += 1 
 
-        # ~~~~ fill summary stats
-        epoch_times.append(epoch_time)
-        epoch_throughput.append(n_nodes_local/epoch_time)
-        batch_times.extend(train_metrics['batch_times'])
-        batch_throughput.extend([n_nodes_local/time for time in train_metrics['batch_times']])
+            # Logging 
+            if RANK == 0:
+                summary_train = ' '.join([
+                    f'[STEP {trainer.iteration}]',
+                    f'loss={loss:.4e}',
+                    f'r_loss={running_loss:.4e}',   # Include average loss in your logging
+                    f't_step={t_step:.4g} sec',
+                    f"lr={trainer.optimizer.param_groups[0]['lr']:.3e}"
+                ])
+                sepstr = '-' * len(summary_train)
+                log.info(sepstr)
+                log.info(summary_train)
+                t_dataTransfer = trainer.timers['dataTransfer'][trainer.timer_step-1]
+                t_bufferInit = trainer.timers['bufferInit'][trainer.timer_step-1]
+                t_forwardPass = trainer.timers['forwardPass'][trainer.timer_step-1]
+                t_loss = trainer.timers['loss'][trainer.timer_step-1]
+                t_backwardPass = trainer.timers['backwardPass'][trainer.timer_step-1]
+                t_optimizerStep = trainer.timers['optimizerStep'][trainer.timer_step-1]
+                log.info(f"t_dataTransfer: {t_dataTransfer:.4g} sec") 
+                log.info(f"t_bufferInit: {t_bufferInit:.4g} sec")
+                log.info(f"t_forwardPass: {t_forwardPass:.4g} sec [{n_nodes_local/t_forwardPass:.4e} nodes/sec]")
+                log.info(f"t_loss: {t_loss:.4g} sec [{n_nodes_local/t_loss:.4e} nodes/sec]")
+                log.info(f"t_backwardPass: {t_backwardPass:.4g} sec [{n_nodes_local/t_backwardPass:.4e} nodes/sec]")
+                log.info(f"t_optimizerStep: {t_optimizerStep:.4g} sec")
 
-        # ~~~~ Validation step
-        t0 = time.time()
-        test_metrics = trainer.test()
-        t1 = time.time()
-        test_time = t1-t0
-        trainer.loss_hist_test[epoch-1] = test_metrics["loss"]
-        
-        # ~~~~ Printing
-        if RANK == 0:
-            summary_train = '  '.join([
-                '[TRAIN]',
-                f'loss={train_metrics["loss"]:.4e}',
-                f'epoch_time={epoch_time:.4g} sec'
-            ])
-            summary_test = '  '.join([
-                ' [TEST]',
-                f'loss={test_metrics["loss"]:.4e}',
-                f'test_time={test_time:.4g} sec'
-            ])
-            log.info((sep := '-' * len(summary_train)))
-            log.info(summary_train)
-            log.info(summary_test)
-            log.info(sep)
+            # Checkpoint  
+            if trainer.iteration % cfg.ckptfreq == 0:
+                trainer.checkpoint()
 
-        # ~~~~ Step scheduler based on validation loss
-        trainer.scheduler.step(test_metrics["loss"]) # SB: toggle scheduler
+            if trainer.iteration >= trainer.total_iterations:
+                break
+        if trainer.iteration >= trainer.total_iterations:
+            break
 
-        # ~~~~ Checkpointing step 
-        if epoch % cfg.ckptfreq == 0 and RANK == 0:
-            astr = 'Checkpointing on root processor, epoch = %d' %(epoch)
-            sepstr = '-' * len(astr)
-            log.info(sepstr)
-            log.info(astr)
-            log.info(sepstr)
+    #Save model
+    trainer.save_model()
 
-            if not os.path.exists(cfg.ckpt_dir):
-                os.makedirs(cfg.ckpt_dir)
-
-            if WITH_DDP and SIZE > 1:
-                sd = trainer.model.module.state_dict()
-            else:
-                sd = trainer.model.state_dict()
-
-            ckpt = {'epoch' : epoch,
-                    'training_iter' : trainer.training_iter,
-                    'model_state_dict' : sd,
-                    'optimizer_state_dict' : trainer.optimizer.state_dict(),
-                    'scheduler_state_dict' : trainer.scheduler.state_dict(),
-                    'loss_hist_train' : trainer.loss_hist_train,
-                    'loss_hist_test' : trainer.loss_hist_test}
-            
-            torch.save(ckpt, trainer.ckpt_path)
-
-    end = time.time()
-
-    # ~~~ Print times
-    epoch_stats = collect_list_times(epoch_times[1:])
-    epoch_throughput_stats = collect_list_times(epoch_throughput[1:])
-    batch_stats = collect_list_times(batch_times[1:])
-    batch_throughput_stats = collect_list_times(batch_throughput[1:])
-    total_epoch_throughput = average_list_times(epoch_throughput)
-    total_batch_throughput = average_list_times(batch_throughput)
-    trainer.collect_timer_stats()
-    if RANK == 0:
-        log.info(f'\nPerformance data averaged over {SIZE} ranks, {len(epoch_times)} epochs and {len(batch_times)} iterations:')
-        log.info(f'Total training time: {end - start}')
-        stats_string = f": min = {epoch_stats['min'][0]:>6e} , " + \
-                           f"max = {epoch_stats['max'][0]:>6e} , " + \
-                           f"avg = {epoch_stats['avg']:>6e} , " + \
-                           f"std = {epoch_stats['std']:>6e} "
-        log.info(f"Training epoch [s] " + stats_string)
-        stats_string = f": min = {epoch_throughput_stats['min'][0]:>6e} , " + \
-                           f"max = {epoch_throughput_stats['max'][0]:>6e} , " + \
-                           f"avg = {epoch_throughput_stats['avg']:>6e} , " + \
-                           f"std = {epoch_throughput_stats['std']:>6e} "
-        log.info(f"Training throughput [nodes/s] " + stats_string)
-        log.info(f"Average parallel training throughout [nodes/s] : {total_epoch_throughput:>6e}")
-        stats_string = f": min = {batch_stats['min'][0]:>6e} , " + \
-                           f"max = {batch_stats['max'][0]:>6e} , " + \
-                           f"avg = {batch_stats['avg']:>6e} , " + \
-                           f"std = {batch_stats['std']:>6e} "
-        log.info(f"Training batch [s] " + stats_string)
-        stats_string = f": min = {batch_throughput_stats['min'][0]:>6e} , " + \
-                           f"max = {batch_throughput_stats['max'][0]:>6e} , " + \
-                           f"avg = {batch_throughput_stats['avg']:>6e} , " + \
-                           f"std = {batch_throughput_stats['std']:>6e} "
-        log.info(f"Training batch throughput [nodes/s] " + stats_string)
-        log.info(f"Average parallel training batch throughout [nodes/s] : {total_batch_throughput:>6e}")
-        trainer.print_timer_stats()
-    
- 
-    if RANK == 0:
-        if WITH_CUDA or WITH_XPU:
-            trainer.model.to('cpu')
-        if not os.path.exists(cfg.model_dir):
-            os.makedirs(cfg.model_dir)
-
-        if WITH_DDP and SIZE > 1:
-            sd = trainer.model.module.state_dict()
-            ind = trainer.model.module.input_dict()
-        else:
-            sd = trainer.model.state_dict()
-            ind = trainer.model.input_dict()
-
-        save_dict = {
-                    'state_dict' : sd,
-                    'input_dict' : ind,
-                    'loss_hist_train' : trainer.loss_hist_train,
-                    'loss_hist_test' : trainer.loss_hist_test,
-                    'training_iter' : trainer.training_iter,
-                    'loss_hist_train_iter' : trainer.loss_hist_train_iter
-                    }
-        
-        torch.save(save_dict, trainer.model_path)
-
-    return 
 
 @hydra.main(version_base=None, config_path='./conf', config_name='config')
 def main(cfg: DictConfig) -> None:
