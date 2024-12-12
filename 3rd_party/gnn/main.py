@@ -40,7 +40,6 @@ import torch.nn.functional as F
 from torchvision import datasets, transforms
 
 import torch.distributed as dist
-#import torch.distributed.nn_mod as distnn
 import torch.distributed.nn as distnn
 from torch.nn.parallel import DistributedDataParallel as DDP
 
@@ -380,7 +379,7 @@ class Trainer:
 
         # ~~~~ Setup train_step timers 
         self.timer_step = 0
-        self.timer_step_max = 100
+        self.timer_step_max = self.total_iterations - self.iteration
         self.timers = self.setup_timers(self.timer_step_max)
         self.timers_max = self.setup_timers(self.timer_step_max)
         self.timers_min = self.setup_timers(self.timer_step_max)
@@ -402,6 +401,7 @@ class Trainer:
                     'optimizer_state_dict' : self.optimizer.state_dict(),
                     'loss_hist_train' : self.loss_hist_train,
                     'loss_hist_test' : self.loss_hist_test}
+            torch.save(ckpt, self.ckpt_path + f".{self.iteration}")
             torch.save(ckpt, self.ckpt_path)
             t_ckpt = time.time() - t_ckpt
 
@@ -480,7 +480,8 @@ class Trainer:
         return n_params
 
     def build_optimizer(self, model: nn.Module) -> torch.optim.Optimizer:
-        optimizer = optim.Adam(model.parameters(), lr=0.0)
+        #optimizer = optim.Adam(model.parameters(), lr=0.0)
+        optimizer = optim.AdamW(model.parameters(), lr=0.0, betas=(0.9, 0.95), weight_decay=0.1)
         return optimizer
 
     def build_scheduler(self, optimizer: torch.optim.Optimizer) -> torch.optim.lr_scheduler:
@@ -811,7 +812,7 @@ class Trainer:
         if RANK == 0: log.info(f"Number of training snapshots: {len(idx_train)}")
         if RANK == 0: log.info(f"Number of validation snapshots: {len(idx_valid)}")
 
-        # Get training data statistics: mean and standard deviation for each feature  
+        # Get training data statistics: mean and standard deviation for each node feature  
         n_features = data_traj_train[0]['x'].shape[1]
         n_nodes_local = self.data_reduced.n_nodes_local
         n_snaps = len(data_traj_train)
@@ -845,7 +846,7 @@ class Trainer:
         data_var = (num_1 + num_2)/torch.sum(n_scale_gather)
         data_std = torch.sqrt(data_var)
         data_std = data_std.unsqueeze(0)
-        if RANK == 0: log.info(f"Computed training data statistics for each feature.")
+        if RANK == 0: log.info(f"Computed training data statistics for each node feature.")
 
         # Get data in reduced format (non-overlapping)
         pos_reduced = self.data_reduced.pos
@@ -901,6 +902,12 @@ class Trainer:
         data_graph = cart(data_graph) # adds cartesian/component-wise distance
         data_graph = dist(data_graph) # adds euclidean distance
         data_graph = data_graph.to(device_for_loading)
+
+        # Normalize edge_attrs by length of the longest edge 
+        distance = data_graph.edge_attr[:,-1]
+        distance_max_ = distance.max().to(self.device)
+        distance_max = distnn.all_reduce(distance_max_, op=distnn.ReduceOp.MAX).to(device_for_loading)
+        data_graph.edge_attr = data_graph.edge_attr/distance_max
 
         # No need for distributed sampler -- create standard dataset loader  
         # We can use the standard pytorch dataloader on (x,y) 
@@ -1201,8 +1208,19 @@ class Trainer:
         a['n_nodes_halo'] = n_nodes_halo
         a['n_edges'] = n_edges
         torch.save(a, savepath + '/%s.tar' %(model.get_save_header())) 
-        
-        return 
+
+    def postprocess(self):
+        """ Do some postprocessing.""" 
+        # Get gradient norm 
+        grads = [
+            param.grad.detach().flatten()
+            for param in self.model.parameters()
+            if param.grad is not None
+        ]
+        gradnorm = torch.cat(grads).norm()
+        dist.barrier()
+        return [gradnorm]
+
 
 def train(cfg: DictConfig) -> None:
     trainer = Trainer(cfg)
@@ -1221,9 +1239,13 @@ def train(cfg: DictConfig) -> None:
             t_step = time.time()
             loss = trainer.train_step(data)
             t_step = time.time() - t_step 
+            trainer.loss_hist_train[trainer.iteration] = loss.item() 
             loss_window.append(loss.item())
             running_loss = sum(loss_window) / len(loss_window)
             trainer.iteration += 1 
+            
+            # Calculate gradients  
+            postproc_out = trainer.postprocess()
 
             # Logging 
             if RANK == 0:
@@ -1249,6 +1271,7 @@ def train(cfg: DictConfig) -> None:
                 log.info(f"t_loss: {t_loss:.4g} sec [{n_nodes_local/t_loss:.4e} nodes/sec]")
                 log.info(f"t_backwardPass: {t_backwardPass:.4g} sec [{n_nodes_local/t_backwardPass:.4e} nodes/sec]")
                 log.info(f"t_optimizerStep: {t_optimizerStep:.4g} sec")
+                log.info(f"grad norm: {postproc_out[0]:.6g}")
 
             # Checkpoint  
             if trainer.iteration % cfg.ckptfreq == 0:
