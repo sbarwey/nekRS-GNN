@@ -9,6 +9,7 @@ import logging
 from collections import deque
 from typing import Optional, Union, Callable
 import numpy as np
+from numpy.typing import NDArray
 import hydra
 import time
 from omegaconf import DictConfig, OmegaConf
@@ -463,7 +464,8 @@ class Trainer:
         n_messagePassing_layers = self.cfg.n_messagePassing_layers
         halo_swap_mode = self.cfg.halo_swap_mode
         #name = 'POLY_%d_RANK_%d_SIZE_%d_SEED_%d' %(poly,RANK,SIZE,self.cfg.seed)
-        name = 'POLY_%d_SIZE_%d_SEED_%d' %(poly,SIZE,self.cfg.seed)
+        #name = 'POLY_%d_SIZE_%d_SEED_%d' %(poly,SIZE,self.cfg.seed)
+        name = 'POLY_%d_SIZE_%d_SEED_%d' %(poly,8,self.cfg.seed)
 
         model = gnn.DistributedGNN(input_node_channels,
                            input_edge_channels,
@@ -776,6 +778,9 @@ class Trainer:
         files_temp = os.listdir(data_dir)
         files = [item for item in files_temp if 'p_step' not in item] 
         files.sort(key=lambda x:int(x.split('_')[-1].split('.')[0]))
+
+        # Reduce files 
+        files = files[:10]
 
         # populate dataset for single-step predictions 
         idx = list(range(len(files)))
@@ -1170,7 +1175,70 @@ class Trainer:
         return [gradnorm]
 
 
+def gather_wrapper(temp: NDArray[np.float32]) -> NDArray[np.float32]:
+
+    temp_shape = temp.shape
+    n_cols = temp_shape[1]
+
+    # ~~~~ gather using mpi4py gatherv   
+    # Step 1: Gather the sizes of each of the local arrays 
+    local_size = np.array(temp.size, dtype='int32')  # total elements = n_nodes_local * 3
+    all_sizes = None
+    if RANK == 0:
+        all_sizes = np.empty(SIZE, dtype='int32')
+    COMM.Gather(local_size, all_sizes, root=0)
+    #log.info(f"[RANK {RANK}] -- STEP 1: all_sizes = {all_sizes}")
+
+    # Step 2: compute displacements for Gatherv 
+    if RANK == 0:
+        displacements = np.insert(np.cumsum(all_sizes[:-1]), 0, 0)
+    else:
+        displacements = None
+    #log.info(f"[RANK {RANK}] -- STEP 2: displacements = {displacements}")
+
+    # Step 3: Flatten the local array for sending 
+    flat_temp = temp.flatten()
+
+    # Step 4: On root, prepare recv buffer 
+    if RANK == 0:
+        total_size = np.sum(all_sizes)
+        recvbuf = np.empty(total_size, dtype=temp.dtype)
+    else:
+        recvbuf = None
+
+    # Perform the Gatherv operation, then reshape the buffer 
+    COMM.Gatherv(
+        sendbuf=flat_temp,
+        recvbuf=(recvbuf, (all_sizes, displacements)) if RANK == 0 else None,
+        root=0
+    )
+
+    gathered_array = None
+    if RANK == 0:
+        # reshape all at once: 
+        gathered_array = recvbuf.reshape(-1, 3)
+
+        # # reshape rank-wise, then concatenate 
+        # gathered_arrays = []
+        # start = 0
+        # for proc_size in all_sizes:
+        #     proc_rows = proc_size // n_cols
+        #     proc_data = recvbuf[start:start+proc_size].reshape(proc_rows, n_cols)
+        #     gathered_arrays.append(proc_data)
+        #     start += proc_size 
+        # gathered_array = np.concatenate(gathered_arrays, axis=0)
+
+    COMM.Barrier()
+
+    return gathered_array
+
+
+
 def inference(cfg: DictConfig) -> None:
+    if RANK == 0:
+        if not os.path.exists(cfg.inference_dir):
+            os.makedirs(cfg.inference_dir)
+    
     trainer = Trainer(cfg)
     trainer.writeGraphStatistics()
     trainer.model.eval()
@@ -1182,7 +1250,8 @@ def inference(cfg: DictConfig) -> None:
 
     with torch.no_grad():
         for bidx, data in enumerate(loader):
-            if RANK == 0: log.info(f"ROLLOUT STEP {bidx}")
+
+            if RANK == 0: log.info(f"~~~~ ROLLOUT STEP {bidx} ~~~~")
             x = data['x']
             pred_scaled = trainer.inference_step(x, graph, stats)
             
@@ -1201,10 +1270,25 @@ def inference(cfg: DictConfig) -> None:
                 log.info(f"Shape of pred: {pred.shape}")
                 log.info(f"Shape of target: {target.shape}")
                 log.info(f"Shape of pos: {pos.shape}")
-            
         
             # Gather the prediction and target with mpi4py gatherv 
-            temp = pred.cpu().numpy()
+            if RANK == 0: log.info("Gathering input...")
+            x_gathered = gather_wrapper(x.cpu().numpy())
+            if RANK == 0: log.info("Gathering target...")
+            target_gathered = gather_wrapper(target.cpu().numpy())
+            if RANK == 0: log.info("Gathering pos...")
+            pos_gathered = gather_wrapper(pos.cpu().numpy())
+
+            # Write the data:  
+            if RANK == 0:
+                log.info("Writing...")
+                np.save(cfg.inference_dir + f"x_{bidx}", x_gathered)
+                np.save(cfg.inference_dir + f"target_{bidx}", target_gathered)
+                np.save(cfg.inference_dir + f"pos_{bidx}", pos_gathered)
+
+ 
+
+
 
 
 @hydra.main(version_base=None, config_path='./conf', config_name='config')

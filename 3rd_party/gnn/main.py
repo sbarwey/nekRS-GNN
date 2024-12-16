@@ -464,6 +464,8 @@ class Trainer:
         halo_swap_mode = self.cfg.halo_swap_mode
         #name = 'POLY_%d_RANK_%d_SIZE_%d_SEED_%d' %(poly,RANK,SIZE,self.cfg.seed)
         name = 'POLY_%d_SIZE_%d_SEED_%d' %(poly,SIZE,self.cfg.seed)
+        if self.cfg.use_residual:
+            name += "_RESID"
 
         model = gnn.DistributedGNN(input_node_channels,
                            input_edge_channels,
@@ -1062,16 +1064,21 @@ class Trainer:
                              batch = graph.batch)
         self.timers['forwardPass'][self.timer_step] = time.time() - self.timers['forwardPass'][self.timer_step]
 
+        if self.cfg.use_residual:
+            pred = out_gnn + x_scaled
+        else:
+            pred = out_gnn
+
         # Accumulate loss
         self.timers['loss'][self.timer_step] = time.time()
         target = (data['y'][0] - stats['mean'])/(stats['std'] + SMALL)
         n_nodes_local = graph.n_nodes_local
         if SIZE == 1:
-            loss = self.loss_fn(out_gnn[:n_nodes_local], target[:n_nodes_local])
+            loss = self.loss_fn(pred[:n_nodes_local], target[:n_nodes_local])
             effective_nodes = n_nodes_local 
         else: # custom 
-            n_output_features = out_gnn.shape[1]
-            squared_errors_local = torch.pow(out_gnn[:n_nodes_local] - target[:n_nodes_local], 2)
+            n_output_features = pred.shape[1]
+            squared_errors_local = torch.pow(pred[:n_nodes_local] - target[:n_nodes_local], 2)
             squared_errors_local = squared_errors_local/graph.node_degree[:n_nodes_local].unsqueeze(-1)
 
             sum_squared_errors_local = squared_errors_local.sum()
