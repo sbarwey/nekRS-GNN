@@ -670,6 +670,8 @@ class Trainer:
         pos = np.fromfile(path_to_pos_full + ".bin", dtype=np.float64).reshape((-1,3))
         pos = pos.astype(NP_FLOAT_DTYPE)
 
+        pos_orig = np.copy(pos)
+
         # We are only periodic in z for the BFS. so we do the following:  
         L_z = 2. 
         # pos[:,2] = np.cos(2.*np.pi*pos[:,2]/L_z) # cosine
@@ -692,7 +694,7 @@ class Trainer:
 
         # ~~~~ Make the full graph: 
         if self.cfg.verbose: log.info('[RANK %d]: Making the FULL GLL-based graph with overlapping nodes' %(RANK))
-        data_full = Data(x = None, edge_index = torch.tensor(ei), pos = torch.tensor(pos), global_ids = torch.tensor(gli.squeeze()), local_unique_mask = torch.tensor(local_unique_mask), halo_unique_mask = torch.tensor(halo_unique_mask))
+        data_full = Data(x = None, edge_index = torch.tensor(ei), pos_orig = torch.tensor(pos_orig), pos = torch.tensor(pos), global_ids = torch.tensor(gli.squeeze()), local_unique_mask = torch.tensor(local_unique_mask), halo_unique_mask = torch.tensor(halo_unique_mask))
         data_full.edge_index = utils.remove_self_loops(data_full.edge_index)[0]
         data_full.edge_index = utils.coalesce(data_full.edge_index)
         data_full.edge_index = utils.to_undirected(data_full.edge_index)
@@ -932,6 +934,10 @@ class Trainer:
         test_loader = torch.utils.data.DataLoader(dataset=data_traj_valid,
                                             batch_size=self.cfg.test_batch_size,
                                             shuffle=False)
+        if RANK == 0:
+            data_mean_cpu = data_mean.cpu().numpy()
+            data_std_cpu = data_std.cpu().numpy()
+            np.savez(self.cfg.traj_data_path + f"/data_stats.npz", mean=data_mean_cpu, std=data_std_cpu)
 
         return {
             'train': {
