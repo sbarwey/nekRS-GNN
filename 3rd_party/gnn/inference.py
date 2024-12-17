@@ -465,7 +465,7 @@ class Trainer:
         halo_swap_mode = self.cfg.halo_swap_mode
         #name = 'POLY_%d_RANK_%d_SIZE_%d_SEED_%d' %(poly,RANK,SIZE,self.cfg.seed)
         #name = 'POLY_%d_SIZE_%d_SEED_%d' %(poly,SIZE,self.cfg.seed)
-        name = 'POLY_%d_SIZE_%d_SEED_%d' %(poly,8,self.cfg.seed)
+        name = 'POLY_%d_SIZE_%d_SEED_%d' %(poly,32,self.cfg.seed)
 
         model = gnn.DistributedGNN(input_node_channels,
                            input_edge_channels,
@@ -783,7 +783,7 @@ class Trainer:
         files.sort(key=lambda x:int(x.split('_')[-1].split('.')[0]))
 
         # Reduce files 
-        files = files[:10]
+        #files = files[:20]
 
         # populate dataset for single-step predictions 
         idx = list(range(len(files)))
@@ -805,41 +805,10 @@ class Trainer:
         if RANK == 0: log.info(f"Number of trajectory snapshots: {len(idx_x)}")
 
         # Get training data statistics: mean and standard deviation for each node feature  
-        # Load training data mean and standard deviation 
-        n_features = data_traj[0]['x'].shape[1]
-        n_nodes_local = self.data_reduced.n_nodes_local
-        n_snaps = len(data_traj)
-        x_full = torch.zeros((n_snaps, n_nodes_local, n_features), dtype=TORCH_FLOAT_DTYPE)
-        for i in range(len(data_traj)):
-            x_full[i,:,:] = data_traj[i]['x'][:n_nodes_local, :]
-        data_mean_ = x_full.mean(axis=(0,1)).to(self.device)
-        data_var_ = x_full.var(axis=(0,1)).to(self.device)
-        n_scale_ = torch.tensor([n_nodes_local * n_snaps], dtype=TORCH_FLOAT_DTYPE, device=self.device)
-
-        data_mean_gather = [torch.zeros(n_features, dtype=TORCH_FLOAT_DTYPE, device=self.device) for _ in range(SIZE)]
-        data_mean_gather = all_gather_tensor(data_mean_gather, data_mean_) 
-
-        data_var_gather = [torch.zeros(n_features, dtype=TORCH_FLOAT_DTYPE, device=self.device) for _ in range(SIZE)]
-        data_var_gather = all_gather_tensor(data_var_gather, data_var_)
-
-        n_scale_gather = [torch.zeros(1, dtype=TORCH_FLOAT_DTYPE, device=self.device) for _ in range(SIZE)]
-        n_scale_gather = all_gather_tensor(n_scale_gather, n_scale_)
-
-        data_mean_gather = torch.stack(data_mean_gather)
-        data_var_gather = torch.stack(data_var_gather)
-        n_scale_gather = torch.stack(n_scale_gather)
-
-        # final mean: 
-        data_mean = torch.sum(n_scale_gather * data_mean_gather, axis=0)/torch.sum(n_scale_gather)
-        data_mean = data_mean.unsqueeze(0)
-            
-        # final std:
-        num_1 = torch.sum(n_scale_gather * data_var_gather, axis=0) # n_i * var_i
-        num_2 = torch.sum(n_scale_gather * (data_mean_gather - data_mean)**2, axis=0)
-        data_var = (num_1 + num_2)/torch.sum(n_scale_gather)
-        data_std = torch.sqrt(data_var)
-        data_std = data_std.unsqueeze(0)
-        if RANK == 0: log.info(f"Computed training data statistics for each node feature.")
+        stats = np.load("/lus/eagle/projects/datascience/sbarwey/codes/nek/nekrs_cases/examples_v23_gnn/bfs_2/traj_poly_3/DT_1EM2_10k_snaps/data_stats.npz")
+        data_mean = torch.tensor(stats['mean']).to(self.device)
+        data_std = torch.tensor(stats['std']).to(self.device)
+        if RANK == 0: log.info(f"Loaded training data statistics for each node feature.")
 
         # Get data in reduced format (non-overlapping)
         pos_reduced = self.data_reduced.pos
@@ -919,6 +888,7 @@ class Trainer:
         train_loader = torch.utils.data.DataLoader(dataset=data_traj, 
                                      batch_size=self.cfg.batch_size,
                                      shuffle=False)
+
         return {
             'test': {
                 'loader': train_loader,
@@ -1238,13 +1208,14 @@ def gather_wrapper(temp: NDArray[np.float32]) -> NDArray[np.float32]:
 
 
 def inference(cfg: DictConfig) -> None:
-    if RANK == 0:
-        if not os.path.exists(cfg.inference_dir):
-            os.makedirs(cfg.inference_dir)
     
     trainer = Trainer(cfg)
     trainer.writeGraphStatistics()
     trainer.model.eval()
+
+    if RANK == 0:
+        if not os.path.exists(cfg.inference_dir + trainer.model.module.get_save_header()):
+            os.makedirs(cfg.inference_dir + trainer.model.module.get_save_header())
 
     graph = trainer.data['graph']
     stats = trainer.data['stats']
@@ -1267,6 +1238,7 @@ def inference(cfg: DictConfig) -> None:
             n_nodes_local = graph.n_nodes_local
             pred = pred[:n_nodes_local]
             target = target[:n_nodes_local]
+            error = pred - target.to(trainer.device)
             pos = pos[:n_nodes_local]
 
             if RANK == 0: 
@@ -1277,17 +1249,27 @@ def inference(cfg: DictConfig) -> None:
             # Gather the prediction and target with mpi4py gatherv 
             if RANK == 0: log.info("Gathering input...")
             x_gathered = gather_wrapper(x.cpu().numpy())
+
+            if RANK == 0: log.info("Gathering pred...")
+            pred_gathered = gather_wrapper(pred.cpu().numpy())
+
             if RANK == 0: log.info("Gathering target...")
             target_gathered = gather_wrapper(target.cpu().numpy())
+
+            if RANK == 0: log.info("Gathering error...")
+            error_gathered = gather_wrapper(error.cpu().numpy())
+
             if RANK == 0: log.info("Gathering pos...")
             pos_gathered = gather_wrapper(pos.cpu().numpy())
 
             # Write the data:  
             if RANK == 0:
                 log.info("Writing...")
-                np.save(cfg.inference_dir + f"x_{bidx}", x_gathered)
-                np.save(cfg.inference_dir + f"target_{bidx}", target_gathered)
-                np.save(cfg.inference_dir + f"pos_{bidx}", pos_gathered)
+                np.save(cfg.inference_dir + trainer.model.module.get_save_header() + f"/x_{bidx}", x_gathered)
+                np.save(cfg.inference_dir + trainer.model.module.get_save_header() + f"/pred_{bidx}", pred_gathered)
+                np.save(cfg.inference_dir + trainer.model.module.get_save_header() + f"/target_{bidx}", target_gathered)
+                np.save(cfg.inference_dir + trainer.model.module.get_save_header() + f"/error_{bidx}", error_gathered)
+                np.save(cfg.inference_dir + trainer.model.module.get_save_header() + f"/pos_{bidx}", pos_gathered)
 
  
 
