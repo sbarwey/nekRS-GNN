@@ -35,8 +35,9 @@ def get_reduced_graph(data_full: Data) -> Tuple[Data, Tensor]:
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
     pos_reduced = data_full.pos[idx_keep]
+    pos_orig_reduced = data_full.pos_orig[idx_keep]
     gid_reduced = data_full.global_ids[idx_keep]
-    data_reduced = Data(x = None, pos = pos_reduced, edge_index = edge_index_reduced, global_ids = gid_reduced)
+    data_reduced = Data(x = None, pos_orig = pos_orig_reduced, pos = pos_reduced, edge_index = edge_index_reduced, global_ids = gid_reduced)
     n_not_halo = len(idx_local_unique)
     n_halo = len(idx_halo_unique)
     data_reduced.local_unique_mask = torch.zeros(n_not_halo + n_halo, dtype=torch.int64)
