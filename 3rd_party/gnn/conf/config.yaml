@@ -1,22 +1,26 @@
 # @package _global_
-profile: False
-halo_test: True
 verbose: False
 seed: 12
-epochs: 1500
 backend: nccl
-lr_init: 0.0001
-# momentum: 0.5
-use_noise : True
 num_threads: 0
-logfreq: 1
-ckptfreq: 5
+logfreq: 10
+ckptfreq: 500
 batch_size: 1
 test_batch_size: 1
 fp16_allreduce: False
 restart: False
 master_addr: none
 master_port: none
+
+# use residual when training. if true: pred = x_in + gnn. if false: pred = gnn 
+use_residual: False
+
+# learning rate schedule 
+phase1_steps: 1000 
+phase2_steps: 50000
+phase3_steps: 0
+lr_phase12: 0.001
+lr_phase23: 0.0000003
 
 # arch properties -- small gnn 
 #hidden_channels: 8
@@ -58,6 +62,8 @@ ckpt_dir: ${work_dir}/ckpt/
 model_dir: ${work_dir}/saved_models/ 
 # path to save profile data  
 profile_dir: ${work_dir}/outputs/profiles/new_timers/ 
+# path to save inference results 
+inference_dir: ${work_dir}/outputs/inference/
 
 
 # specify path to gnn_outputs here (case directory)  
@@ -68,8 +74,3 @@ profile_dir: ${work_dir}/outputs/profiles/new_timers/
 gnn_outputs_path: /lus/eagle/projects/datascience/sbarwey/codes/nek/nekrs_cases/examples_v23_gnn/tgv/gnn_outputs_distributed_gnn/gnn_outputs_poly_1/
 #gnn_outputs_path: /lus/eagle/projects/datascience/sbarwey/codes/nek/nekrs_cases/examples_v23_gnn/tgv_weak_scaling/ne_8/gnn_outputs_poly_1/ 
 traj_data_path: /lus/eagle/projects/datascience/sbarwey/codes/nek/nekrs_cases/examples_v23_gnn/tgv/traj_poly_1/
-
-
-
-
-
