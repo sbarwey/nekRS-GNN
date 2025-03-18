@@ -38,6 +38,9 @@ rollout_steps: 1
 # Halo swap mode 
 halo_swap_mode : none
 
+# Halo swap flag 
+halo_swap_flag : last
+
 # plotting the connecivity (can take some time)
 plot_connectivity : False
 
