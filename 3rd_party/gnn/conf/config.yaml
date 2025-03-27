@@ -44,6 +44,9 @@ halo_swap_flag : last
 # plotting the connecivity (can take some time)
 plot_connectivity : False
 
+# inference mode 
+inference_mode : single_step
+
 hydra:
   job:
     chdir: true
