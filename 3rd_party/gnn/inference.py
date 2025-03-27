@@ -466,6 +466,8 @@ class Trainer:
         #name = 'POLY_%d_RANK_%d_SIZE_%d_SEED_%d' %(poly,RANK,SIZE,self.cfg.seed)
         #name = 'POLY_%d_SIZE_%d_SEED_%d' %(poly,SIZE,self.cfg.seed)
         name = 'POLY_%d_SIZE_%d_SEED_%d' %(poly,32,self.cfg.seed)
+        if self.cfg.use_residual:
+            name += "_RESID"
 
         model = gnn.DistributedGNN(input_node_channels,
                            input_edge_channels,
@@ -1080,6 +1082,7 @@ class Trainer:
         self.timers['bufferInit'][self.timer_step] = time.time() - self.timers['bufferInit'][self.timer_step]
         
         # Prediction
+        # if RANK == 0: log.info("FP 1")
         self.timers['forwardPass'][self.timer_step] = time.time()
         x_scaled = (x[0] - stats['mean'])/(stats['std'] + SMALL)
         out_gnn = self.model(x = x_scaled,
@@ -1095,11 +1098,25 @@ class Trainer:
                              SIZE = SIZE,
                              batch = graph.batch)
         self.timers['forwardPass'][self.timer_step] = time.time() - self.timers['forwardPass'][self.timer_step]
-
+        
         if self.cfg.use_residual: 
             pred = out_gnn + x_scaled
         else:
             pred = out_gnn
+
+        # if RANK == 0: log.info("FP 2")
+        # out_gnn = self.model(x = pred,
+        #                      edge_index = graph.edge_index,
+        #                      edge_attr = graph.edge_attr,
+        #                      edge_weight = graph.edge_weight,
+        #                      halo_info = graph.halo_info,
+        #                      mask_send = self.mask_send,
+        #                      mask_recv = self.mask_recv,
+        #                      buffer_send = self.buffer_send,
+        #                      buffer_recv = self.buffer_recv,
+        #                      neighboring_procs = self.neighboring_procs,
+        #                      SIZE = SIZE,
+        #                      batch = graph.batch)
 
         return pred
 
@@ -1226,11 +1243,27 @@ def inference(cfg: DictConfig) -> None:
         for bidx, data in enumerate(loader):
 
             if RANK == 0: log.info(f"~~~~ ROLLOUT STEP {bidx} ~~~~")
-            x = data['x']
+            # x = data['x']
+            if bidx == 0: 
+                x = data['x']
+            else:
+                if cfg.inference_mode == "single_step":
+                    x = data['x']
+                elif cfg.inference_mode == "rollout":
+                    x = pred_ro 
+                else:
+                    raise ValueError(f"Invalid inference_mode: {cfg.inference_mode}")
+
+
             pred_scaled = trainer.inference_step(x, graph, stats)
             
             # unscale 
             pred = pred_scaled * stats['std'] + stats['mean']
+            pred_ro = pred.clone().detach().unsqueeze(0)
+
+            # pred_2 = trainer.inference_step(x_ro, graph, stats)
+
+            # force_abort()
 
             # get target 
             target = data['y'][0]
