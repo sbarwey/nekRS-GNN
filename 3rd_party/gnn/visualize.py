@@ -32,13 +32,15 @@ mesh = pv.read(f"{root_dir}/outputs/meshes/bfs_nek/bfs.msh")
 # p.add_axes()
 # p.show()
 
+inference_mode = "single_step"
+halo_mode = "none"
+n_mp = 8
+n_hc = 64
+
 # Load 3d coordinates and velocity field  
-#model_str = "POLY_3_SIZE_32_SEED_64_3_4_64_3_2_4_all_to_all_opt"
-#model_str = "POLY_3_SIZE_32_SEED_64_3_4_128_3_2_4_all_to_all_opt"
-#model_str = "POLY_3_SIZE_32_SEED_64_3_4_256_3_2_4_all_to_all_opt"
-#model_str = "POLY_3_SIZE_32_SEED_64_3_4_64_3_2_8_all_to_all_opt"
-model_str = "POLY_3_SIZE_32_SEED_64_3_4_128_3_2_8_all_to_all_opt"
-data_path = f"{root_dir}/outputs/inference/" + model_str
+model_str = f"POLY_3_SIZE_32_SEED_64_RESID_3_4_{n_hc}_3_2_{n_mp}_{halo_mode}"
+data_path = f"{root_dir}/outputs/inference/{inference_mode}/" + model_str
+
 N_snaps = 100
 for i in range(N_snaps):
     print(f"step {i}")
