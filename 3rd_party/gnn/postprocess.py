@@ -1,12 +1,150 @@
 import numpy as np
+import re
 import matplotlib.pyplot as plt
 from matplotlib.colors import Normalize, LogNorm
 import matplotlib.cm as cm
-import os 
+import os,time 
 
 plt.rcParams.update({'font.size': 22})
 
 import torch
+
+
+def plot_from_log(log_file_path_list, N_skip=224):
+    steps_list = []
+    loss_list = []
+    lr_list = []
+    t_forwardPass_list = []
+    for log_file_path in log_file_path_list: 
+        step_line_regex = re.compile(
+        r'\[STEP\s+(\d+)\]\s+loss=([\deE\+\.-]+)\s+r_loss=([\deE\+\.-]+)\s+t_step=([\deE\+\.-]+)\s+sec\s+lr=([\deE\+\.-]+)')
+
+        # For lines like: t_dataTransfer: 0.0001938 sec
+        basic_time_regex = re.compile(
+            r'^\[.*?\].*-\s+(t_\w+):\s+([\deE\+\.-]+)\s+sec'
+        ) 
+
+        # For lines that have nodes/sec info, e.g.: t_forwardPass: 0.1266 sec [2.8707e+05 nodes/sec]
+        nodes_time_regex = re.compile(
+            r'^\[.*?\].*-\s+(t_\w+):\s+([\deE\+\.-]+)\s+sec\s+\[([\deE\+\.-]+)\s+nodes/sec\]'
+        )
+
+        # For grad norm line: grad norm: 4.13608
+        grad_norm_regex = re.compile(
+            r'^\[.*?\].*-\s+grad norm:\s+([\deE\+\.-]+)'
+        )
+
+        steps = []
+        losses = []
+        r_losses = []
+        t_steps = []
+        lrs = []
+        t_dataTransfer = []
+        t_bufferInit = []
+        t_forwardPass = []
+        t_forwardPass_nodes = []
+        t_loss_list = []
+        t_loss_nodes = []
+        t_backwardPass = []
+        t_backwardPass_nodes = []
+        t_optimizerStep = []
+        grad_norms = []
+
+        with open(log_file_path, 'r') as f:
+            # Skip first N lines
+            for _ in range(N_skip):
+                next(f)
+
+            current_step = None
+            # We will read line by line
+            for line in f:
+                # Check if line is a step line
+                step_match = step_line_regex.search(line)
+                if step_match:
+                    # We've encountered a new step line, which means previous step's data collection is done.
+                    # Parse values
+                    current_step = int(step_match.group(1))
+                    steps.append(current_step)
+                    losses.append(float(step_match.group(2)))
+                    r_losses.append(float(step_match.group(3)))
+                    t_steps.append(float(step_match.group(4)))
+                    lrs.append(float(step_match.group(5)))
+                    continue
+
+                # If we have a current step set, we parse subsequent lines
+                if current_step is not None:
+                    # Check for times
+                    nm = nodes_time_regex.search(line)
+                    if nm:
+                        key = nm.group(1)
+                        val = float(nm.group(2))
+                        nodes_val = float(nm.group(3))
+                        if key == 't_forwardPass':
+                            t_forwardPass.append(val)
+                            t_forwardPass_nodes.append(nodes_val)
+                        elif key == 't_loss':
+                            t_loss_list.append(val)
+                            t_loss_nodes.append(nodes_val)
+                        elif key == 't_backwardPass':
+                            t_backwardPass.append(val)
+                            t_backwardPass_nodes.append(nodes_val)
+                        else:
+                            # If you have other timed metrics with nodes/sec pattern, handle them here
+                            pass
+                        continue
+
+                    bm = basic_time_regex.search(line)
+                    if bm:
+                        key = bm.group(1)
+                        val = float(bm.group(2))
+                        if key == 't_dataTransfer':
+                            t_dataTransfer.append(val)
+                        elif key == 't_bufferInit':
+                            t_bufferInit.append(val)
+                        elif key == 't_optimizerStep':
+                            t_optimizerStep.append(val)
+                        # Add other basic times as needed
+                        continue
+
+                    gm = grad_norm_regex.search(line)
+                    if gm:
+                        grad_norms.append(float(gm.group(1)))
+                        continue
+
+        # Convert lists to numpy arrays
+        steps = np.array(steps)
+        losses = np.array(losses)
+        r_losses = np.array(r_losses)
+        t_steps = np.array(t_steps)
+        lrs = np.array(lrs)
+        t_dataTransfer = np.array(t_dataTransfer)
+        t_bufferInit = np.array(t_bufferInit)
+        t_forwardPass = np.array(t_forwardPass)
+        t_forwardPass_nodes = np.array(t_forwardPass_nodes)
+        t_loss_list = np.array(t_loss_list)
+        t_loss_nodes = np.array(t_loss_nodes)
+        t_backwardPass = np.array(t_backwardPass)
+        t_backwardPass_nodes = np.array(t_backwardPass_nodes)
+        t_optimizerStep = np.array(t_optimizerStep)
+        grad_norms = np.array(grad_norms)
+
+        steps_list.append(steps)
+        loss_list.append(losses)
+        lr_list.append(lrs)
+        t_forwardPass_list.append(t_forwardPass)
+
+        steps = np.concatenate(steps_list) 
+        loss = np.concatenate(loss_list)
+        lr = np.concatenate(lr_list)
+        t_fp = np.concatenate(t_forwardPass_list)
+        data = {}
+        data['steps'] = steps
+        data['loss'] = loss
+        data['lr'] = lr
+        data['t_fp'] = t_fp
+
+    return data
+
 
 def get_grad_data(SIZE, keys, halo_mode_list):
     DATA_FULL = []
@@ -34,22 +172,478 @@ def get_grad_data(SIZE, keys, halo_mode_list):
 
 if __name__ == "__main__":
 
+    if 1 == 1:
+        from scipy.stats import norm
+        """
+        [INFERENCE] Plot error distributions for single-step predictions 
+        """
+        inference_path = "/Volumes/Novus_SB_14TB/nek/nekRS-GNN-devel/3rd_party/gnn/outputs/inference"
+        inference_mode = "single_step"
+        model_name = "POLY_3_SIZE_32_SEED_64_RESID_3_4_256_3_2_8_none"
+        datapath = f"{inference_path}/{inference_mode}/{model_name}/error_15.npy"
+        error = np.load(datapath)
+
+        stats = np.load("./datasets/data_stats.npz")
+        data_mean = stats['mean']
+        data_std = stats['std']
+
+        # Load data 
+        bins = 500
+
+        fig, ax = plt.subplots(1, 3, figsize=(18, 5))
+        for idx in range(3):
+            # Select the data for the current error component
+            data = error[:, idx]/data_std[0,idx]
+
+            weights = np.ones_like(data) / len(data)
+            
+            # Plot the histogram as a probability density function
+            ax[idx].hist(data, bins=bins, weights=weights, alpha=0.6, color='b')
+            
+            # # Define the range for x: you could use a wider range if needed
+            # xmin, xmax = ax[idx].get_xlim()
+            # xmin = -5
+            # xmax = 5
+            # x = np.linspace(xmin, xmax, 200)
+            # 
+            # # Gaussian (normal) distribution with mean=0 and std=1
+            # p = norm.pdf(x, 0, 1)
+            
+            # # Overlay the Gaussian curve
+            # ax[idx].plot(x, p, 'k', linewidth=2)
+            
+            ax[idx].set_title(f'Error Component {idx+1}')
+            ax[idx].set_xlabel('Value')
+            ax[idx].set_ylabel('Probability Density')
+            ax[idx].set_yscale('log')
+            ax[idx].set_xlim([-2,2])
+        plt.tight_layout()  # Adjust spacing to prevent overlap
+        plt.show(block=False)
+
+        asdf
+
+
     if 1 == 0:
         """
-        Load a SINGLE model and plot its loss 
+        Autocorrelation studies 
         """
-        a = torch.load('saved_models/model.tar')
-        loss_train = a['loss_hist_train']
 
-        epochs = np.arange(1, len(loss_train)+1)
+        # /Volumes/Novus_SB_14TB/nek/nekrs_cases/examples_v23_gnn/bfs_2/traj_poly_3/DT_1EM2/tinit_75.000000_dtfactor_1/data_rank_0_size_4
+
+        # Load data 
+        dtfac = 1
+        traj_data_path = f"/Volumes/Novus_SB_14TB/nek/nekrs_cases/examples_v23_gnn/bfs_2/traj_poly_3/DT_1EM2/tinit_75.000000_dtfactor_{dtfac}"
+
+        RANK = 0
+        SIZE = 4
+        data_dir = traj_data_path + f"/data_rank_{RANK}_size_{SIZE}"
 
 
-        fig, ax = plt.subplots()
-        ax.plot(epochs, loss_train)
-        ax.set_xlabel('Iterations')
-        ax.set_ylabel('Loss')
-        ax.set_title('Training Demo -- Single Snapshot (Periodic Hill)')
+        # mask bounding box 
+        #x_range = [0,10]
+        #y_range = [-1,1]
+
+        x_range = [10,20]
+        y_range = [-1,1]
+
+        # ~~~~~~~ read positions ~~~~~~~ ~~~~~~~ 
+        pos = []
+        mask = []
+        for RANK in range(SIZE): 
+            pos_file = f"/Volumes/Novus_SB_14TB/nek/nekrs_cases/examples_v23_gnn/bfs_2/gnn_outputs_poly_3/pos_node_rank_{RANK}_size_{SIZE}.bin"
+            pos_rank = np.fromfile(pos_file, dtype=np.float64).reshape((-1,3))
+            mask_rank = (pos_rank[:, 0] >= x_range[0]) & (pos_rank[:, 0] <= x_range[1]) & (pos_rank[:, 1] >= y_range[0]) & (pos_rank[:, 1] <= y_range[1])
+
+            pos.append(pos_rank)
+            mask.append(mask_rank)
+        pos = np.concatenate(pos)
+        #mask = np.concatenate(mask)
+
+        #gll_mask = pos[:,1] <= 1
+        # mask = (pos[:, 0] >= x_range[0]) & (pos[:, 0] <= x_range[1]) & \
+        #        (pos[:, 1] >= y_range[0]) & (pos[:, 1] <= y_range[1])
+
+        # Get a vel field 
+        U_temp = []
+        for RANK in range(SIZE):
+            data_dir = traj_data_path + f"/data_rank_{RANK}_size_{SIZE}"
+            U_temp.append( np.fromfile(data_dir + "/" + "u_step_453.bin", dtype=np.float64).reshape((-1,3)) )
+        U_temp = np.concatenate(U_temp)
+
+        # plot:
+        fig, ax = plt.subplots(figsize=(10,4))
+        ax.scatter(pos[np.concatenate(mask),0], pos[np.concatenate(mask),1], 
+                   c=U_temp[np.concatenate(mask),0], s=0.5)
+        ax.set_aspect('equal')
         plt.show(block=False)
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+        files_temp = os.listdir(data_dir)
+        files = [item for item in files_temp if 'p_step' not in item]
+        files.sort(key=lambda x:int(x.split('_')[-1].split('.')[0]))
+
+        # Get the mean field 
+        U_full = []
+        for i in range(len(files)):
+            print(f"{files[i]}")
+            U_temp = [] 
+            for RANK in range(SIZE):
+                data_dir = traj_data_path + f"/data_rank_{RANK}_size_{SIZE}"
+                U_temp.append( np.fromfile(data_dir + "/" + files[i], dtype=np.float64).reshape((-1,3))[mask[RANK]] )
+            U_temp = np.concatenate(U_temp)
+            U_full.append(U_temp)
+        U_full = np.stack(U_full)
+        U_mean = np.mean(U_full, axis=0)
+        np.save(f"./outputs/autocorrelation_analysis/U_mean_xrange_{x_range[0]}_{x_range[1]}_yrange_{y_range[0]}_{y_range[1]}.npy", U_mean)
+        U_mean = np.load(f"./outputs/autocorrelation_analysis/U_mean_xrange_{x_range[0]}_{x_range[1]}_yrange_{y_range[0]}_{y_range[1]}.npy")
+
+        fig, ax = plt.subplots(figsize=(5,3))
+        ax.scatter(pos[np.concatenate(mask),0], pos[np.concatenate(mask),1], 
+                   c=U_mean[:,1], s=1, vmin=-1, vmax=1)
+        ax.set_aspect('equal')
+        plt.show(block=False)
+
+
+        # # Split the files into trajectory "chunks" -- needed for averaging 
+        # num_chunks = 5
+        # chunk_size = len(files) // num_chunks
+        # trimmed_files = files[:chunk_size * num_chunks]
+        # # Create the chunks
+        # files_split = [trimmed_files[i * chunk_size : (i + 1) * chunk_size] for i in range(num_chunks)]
+
+        # Use overlapping chunks 
+        chunk_size = 100
+        overlap = 60
+        files_split = [files[i : i + chunk_size] for i in range(0, len(files) - chunk_size + 1, chunk_size - overlap)]
+
+        rho_ens = []
+        s = np.arange(len(files))
+        for i in range(len(files_split)): 
+            t_chunk = time.time()
+            print(f"chunk {i}")
+            files = files_split[i]
+            # init autocorrelation data. rho[p] is temporal autocorrelation at delay "p"  
+            # we have "num_chunks" amount of rho variables. In the end, we want to ensemble average over this.  
+            rho = np.zeros((len(files), U_mean.shape[0], U_mean.shape[1]))
+
+            # load the reference snap 
+            U_ref = []
+            for RANK in range(SIZE):
+                U_ref.append( np.fromfile(data_dir + "/" + files[0], dtype=np.float64).reshape((-1,3))[mask[RANK]] )
+            U_ref = np.concatenate(U_ref)
+            u_ref = U_ref - U_mean
+
+            for s in range(len(files)):
+                print("\t",s)
+                U_s = []
+                for RANK in range(SIZE):
+                    U_s.append( np.fromfile(data_dir + "/" + files[s], dtype=np.float64).reshape((-1,3))[mask[RANK]] )
+                U_s = np.concatenate(U_s)
+                u_s = U_s - U_mean
+                rho[s] = u_ref * u_s
+
+            rho_ens.append(rho)
+            t_chunk = time.time() - t_chunk
+            print(f"\t took {t_chunk}s")
+
+        # Take the ensemble average IN TIME ONLY 
+        rho_ens = np.stack(rho_ens) 
+        print('computing time avg')
+        rho_avg_time = np.mean(rho_ens, axis=0)
+        rho_avg_time_norm = rho_avg_time / (rho_avg_time[0] + 1e-15)
+
+        gll_id = list(range(12,434))
+        comp = 0
+        fig, ax = plt.subplots()
+        ax.plot(rho_avg_time_norm[:, gll_id, comp], color='black')
+        plt.show(block=False)
+
+        # Take the ensemble average IN SPACE AND TIME 
+        print('computing space-time avg')
+        rho_avg_spacetime = np.mean(rho_ens, axis=(0,2))
+        rho_avg_spacetime_norm = rho_avg_spacetime / rho_avg_spacetime[0]
+        time_vec = np.arange(rho_avg_spacetime_norm.shape[0])*1e-2
+        cfl_vec = np.arange(rho_avg_spacetime_norm.shape[0])*0.3
+
+        fig, ax = plt.subplots(1,3,figsize=(14,7))
+        for comp in range(3):
+            ax[comp].plot(time_vec, rho_avg_time_norm[:, ::1000, comp], color='gray', alpha=0.5)
+            ax[comp].plot(time_vec, rho_avg_spacetime_norm[:, comp], color='red', lw=2)
+            ax[comp].set_ylim([-1,2])
+            ax[comp].set_xscale('log')
+            ax[comp].set_xlabel('dt')
+            ax2 = ax[comp].twiny()
+            ax2.plot(cfl_vec, rho_avg_spacetime_norm[:, comp], color='red', lw=2)
+            ax2.set_xlabel('CFL')
+            ax2.set_xscale('log')
+            ax2.grid(False)
+        plt.show(block=False)
+
+    if 1 == 0:
+        """
+        Scatter plots for input/output in surrogate models (traj data)
+        """
+        SIZE = 8
+        traj_data_path = "/Volumes/Novus_SB_14TB/nek/nekrs_cases/examples_v23_gnn/bfs_2/traj_poly_3/DT_1EM2"
+        dtfac = 1 
+
+
+        # Load data 
+        data_0 = []
+        data_1 = [] 
+        data_10 = []
+        data_100 = []
+        for RANK in range(SIZE):
+            print(f"Loading rank {RANK}...")
+            data_dir = traj_data_path + f"/tinit_75.000000_dtfactor_{dtfac}/data_rank_{RANK}_size_{SIZE}"
+            files_temp = os.listdir(data_dir)
+            files = [item for item in files_temp if 'p_step' not in item]
+            files.sort(key=lambda x:int(x.split('_')[-1].split('.')[0]))
+            
+            data_0.append( np.fromfile(data_dir + "/" + files[0], dtype=np.float64).reshape((-1,3)) )
+            data_1.append( np.fromfile(data_dir + "/" + files[1], dtype=np.float64).reshape((-1,3)) )
+            data_10.append( np.fromfile(data_dir + "/" + files[10], dtype=np.float64).reshape((-1,3)) )
+            data_100.append( np.fromfile(data_dir + "/" + files[100], dtype=np.float64).reshape((-1,3)) ) 
+
+
+        for RANK in range(SIZE): 
+            print(f"plotting rank {RANK}")
+            fig, ax = plt.subplots(3,1,figsize=(4,8))
+            for c in range(3):
+                dmin = data_0[RANK][:,c].min()
+                dmax = data_0[RANK][:,c].max()
+                #ax[c].scatter(data_0[RANK][:,c], data_1[RANK][:,c])
+                #ax[c].scatter(data_0[RANK][:,c], data_10[RANK][:,c])
+                ax[c].scatter(data_0[RANK][:,c], data_100[RANK][:,c])
+                ax[c].set_xlim([dmin, dmax])
+                ax[c].set_ylim([dmin, dmax])
+                #ax[c].set_aspect('equal')
+            plt.savefig(f"./outputs/postproc/bfs_figs/data_rank_{RANK}_dtfac_100.png", transparent=False, dpi=500)
+            plt.close()
+
+    if 1 == 1:
+        """
+        Load a model and plot its loss 
+        """
+
+        # ~~~ # modelpath = "/Users/sbarwey/Files/solvers/nekRS-GNN-devel/3rd_party/gnn/saved_models/bfs_factor_dt_1em2_1k_snaps/bfs_factor_10" 
+
+        # ~~~ # lw = 2.5
+        # ~~~ # fig, ax = plt.subplots(figsize=(6,7))
+
+        # ~~~ # n_mp_plot = [1,2,4,8,12] 
+        # ~~~ # n_hc_plot = [32,64,128,256]
+        # ~~~ # n_hc_plot = [256]
+
+        # ~~~ # min_val = min(n_mp_plot)
+        # ~~~ # max_val = max(n_mp_plot)
+        # ~~~ # normed_values = [0.4 + 0.6 * (val - min_val) / (max_val - min_val) for val in n_mp_plot]
+        # ~~~ # colors = [plt.cm.Blues(value) for value in normed_values]
+    
+        # ~~~ # for n_hc in n_hc_plot:
+        # ~~~ #     count = 0
+        # ~~~ #     for n_mp in n_mp_plot: 
+        # ~~~ #         color = colors[count]
+
+        # ~~~ #         if (n_mp == 1) or (n_mp == 2):
+        # ~~~ #             l_a2ao = torch.load(modelpath + f"/POLY_3_RANK_0_SIZE_32_SEED_12_3_4_{n_hc}_3_2_{n_mp}_all_to_all_opt.tar")
+        # ~~~ #         else:
+        # ~~~ #             if n_hc == 128:
+        # ~~~ #                 l_a2ao = torch.load(modelpath + f"/POLY_3_RANK_0_SIZE_16_SEED_12_3_4_{n_hc}_3_2_{n_mp}_all_to_all_opt.tar")
+        # ~~~ #             elif n_hc == 256:
+        # ~~~ #                 l_a2ao = torch.load(modelpath + f"/POLY_3_RANK_0_SIZE_32_SEED_12_3_4_{n_hc}_3_2_{n_mp}_all_to_all_opt.tar")
+        # ~~~ #             else:
+        # ~~~ #                 l_a2ao = torch.load(modelpath + f"/POLY_3_RANK_0_SIZE_8_SEED_12_3_4_{n_hc}_3_2_{n_mp}_all_to_all_opt.tar")
+
+        # ~~~ #             
+
+        # ~~~ #         epochs_train = list(range(0, len(l_a2ao['loss_hist_train'])))
+        # ~~~ #         epochs_test = list(range(1, len(l_a2ao['loss_hist_train'])+1))
+        # ~~~ # 
+        # ~~~ #         iters_train = np.array(list(range(0, len(l_a2ao['loss_hist_train_iter']))))/450
+        # ~~~ #         iters_max = 4500
+
+        # ~~~ #         if n_hc == 32:
+        # ~~~ #             ls='--'
+        # ~~~ #         if n_hc == 64:
+        # ~~~ #             ls='-'
+        # ~~~ #         if n_hc == 128:
+        # ~~~ #             ls=':'
+        # ~~~ #         if n_hc == 256:
+        # ~~~ #             ls='-.'
+
+        # ~~~ #         # # For slides: 
+        # ~~~ #         # if (n_hc == 256 and n_mp == 12):
+        # ~~~ #         #     pass
+        # ~~~ #         # else:
+        # ~~~ #         #     ax.plot(epochs_train, l_a2ao['loss_hist_train'], lw=lw, ls=ls, color=color, label=f"(mp,hc)=({n_mp},{n_hc})")
+        # ~~~ #         ax.plot(epochs_train, l_a2ao['loss_hist_train'], lw=lw, ls=ls, color=color, label=f"(mp,hc)=({n_mp},{n_hc})")
+
+        # ~~~ #         count += 1
+ 
+        # ~~~ # ax.set_xlabel('Epochs')
+        # ~~~ # ax.set_ylabel('Loss')
+        # ~~~ # #ax.set_title(f'dt factor = {dtfac}')
+        # ~~~ # ax.set_yscale('log')
+        # ~~~ # ax.set_ylim([1e-3, 1e0])
+        # ~~~ # ax.grid(False)
+        # ~~~ # ax.legend(prop={'size': 12}, fancybox=False, framealpha=1)
+        # ~~~ # plt.show(block=False)
+
+
+        # ~~~ # # Aside: same model, effect of seed 
+        # ~~~ # n_hc = 256
+        # ~~~ # n_mp = 12 
+        # ~~~ # l1 = torch.load(modelpath + f"/POLY_3_RANK_0_SIZE_32_SEED_12_3_4_{n_hc}_3_2_{n_mp}_all_to_all_opt.tar")
+        # ~~~ # l2 = torch.load(modelpath + f"/POLY_3_RANK_0_SIZE_32_SEED_64_3_4_{n_hc}_3_2_{n_mp}_all_to_all_opt.tar")
+        # ~~~ # l3 = torch.load(modelpath + f"/POLY_3_RANK_0_SIZE_32_SEED_96_3_4_{n_hc}_3_2_{n_mp}_all_to_all_opt.tar")
+        # ~~~ # l4 = torch.load(modelpath + f"/POLY_3_RANK_0_SIZE_32_SEED_45_3_4_{n_hc}_3_2_{n_mp}_all_to_all_opt.tar")
+
+        # ~~~ # lw = 2
+        # ~~~ # fig, ax = plt.subplots(figsize=(6,7))
+        # ~~~ # ax.plot(epochs_train, l1['loss_hist_train'], lw=lw, ls=ls, label=f"seed=12")
+        # ~~~ # ax.plot(epochs_train, l2['loss_hist_train'], lw=lw, ls=ls, label=f"seed=64")
+        # ~~~ # ax.plot(epochs_train, l3['loss_hist_train'], lw=lw, ls=ls, label=f"seed=96")
+        # ~~~ # ax.plot(epochs_train, l4['loss_hist_train'], lw=lw, ls=ls, label=f"seed=45")
+        # ~~~ # ax.legend(prop={'size': 12}, fancybox=False, framealpha=1)
+        # ~~~ # ax.set_yscale('log')
+        # ~~~ # plt.show(block=False)
+
+
+        # Aside: plot loss from log 
+        #log_file_path_list = ["./outputs/logs/distgnn_bfs.o3111215", 
+        #                      "./outputs/logs/distgnn_bfs.o3111374",
+        #                      "./outputs/logs/distgnn_bfs.o3111445",
+        #                      "./outputs/logs/distgnn_bfs.o3111594"]
+        log_file_path_list = ["./saved_models/bfs_factor_dt_1em2_10k_snaps/bfs_factor_10/dgnn_bfs_8_128_na2a.o3742127"]
+        data_mp8_hc128 = plot_from_log(log_file_path_list, N_skip=224)
+
+        log_file_path_list = ["./saved_models/bfs_factor_dt_1em2_10k_snaps/bfs_factor_10/dgnn_bfs_8_128_none.o3742130"]
+        data_mp8_hc128_none = plot_from_log(log_file_path_list, N_skip=224)
+
+        #log_file_path_list = ["./outputs/logs/distgnn_bfs.o3111704"]
+        log_file_path_list = ["./saved_models/bfs_factor_dt_1em2_10k_snaps/bfs_factor_10/dgnn_bfs_8_64_na2a.o3742126"]
+        data_mp8_hc64 = plot_from_log(log_file_path_list, N_skip=224)
+
+        log_file_path_list = ["./saved_models/bfs_factor_dt_1em2_10k_snaps/bfs_factor_10/dgnn_bfs_8_64_none.o3742129"]
+        data_mp8_hc64_none = plot_from_log(log_file_path_list, N_skip=224)
+        
+        log_file_path_list = ["./saved_models/bfs_factor_dt_1em2_10k_snaps/bfs_factor_10/dgnn_bfs_8_64_na2a_varcons.o3742168"]
+        data_mp8_hc64_last = plot_from_log(log_file_path_list, N_skip=224)
+        
+        #log_file_path_list = ["./outputs/logs/distgnn_bfs.o3111691",
+        #                    "./outputs/logs/distgnn_bfs.o3111805",
+        #                    "./outputs/logs/distgnn_bfs.o3112405",
+        #                    "./outputs/logs/distgnn_bfs.o3111893",
+        #                    "./outputs/logs/distgnn_bfs.o3112405"]
+        log_file_path_list = ["./saved_models/bfs_factor_dt_1em2_10k_snaps/bfs_factor_10/dgnn_bfs_8_256_na2a.o3742128"]
+        data_mp8_hc256 = plot_from_log(log_file_path_list, N_skip=224)
+
+        log_file_path_list = ["./saved_models/bfs_factor_dt_1em2_10k_snaps/bfs_factor_10/dgnn_bfs_8_256_none.o3742131"]
+        data_mp8_hc256_none = plot_from_log(log_file_path_list, N_skip=224)
+
+        #log_file_path_list = ["./outputs/logs/distgnn_bfs_mp4.o3111717"]
+        #data_mp4_hc64 = plot_from_log(log_file_path_list, N_skip=224)
+        #log_file_path_list = ["./outputs/logs/distgnn_bfs_mp4.o3111719"]
+        #data_mp4_hc128 = plot_from_log(log_file_path_list, N_skip=224)
+        #log_file_path_list = ["./outputs/logs/distgnn_bfs_mp4.o3111720"]
+        #data_mp4_hc256 = plot_from_log(log_file_path_list, N_skip=224)
+
+        # Assume you have numpy arrays: steps, losses, lrs
+        fig, ax1 = plt.subplots(figsize=(8,7))
+        ax2 = ax1.twinx()
+
+        # Plot losses on the primary y-axis (ax1)
+        ax1.set_xlabel('Step')
+        ax1.set_ylabel('Loss')
+        ax1.plot(data_mp8_hc64_none['steps'], data_mp8_hc64_none['loss'], color='tab:red', alpha=0.2, label='MP=8, HC=64, None')
+        ax1.plot(data_mp8_hc64['steps'], data_mp8_hc64['loss'], color='tab:blue', alpha=0.2, label='MP=8, HC=64, N-A2A')
+
+        #ax1.plot(data_mp8_hc128_none['steps'], data_mp8_hc128_none['loss'], color='tab:red', alpha=0.6, label='MP=8, HC=128, None')
+        #ax1.plot(data_mp8_hc128['steps'], data_mp8_hc128['loss'], color='tab:blue', alpha=0.6, label='MP=8, HC=128, N-A2A')
+
+        #ax1.plot(data_mp8_hc256_none['steps'], data_mp8_hc256_none['loss'], color='tab:red', alpha=1.0, label='MP=8, HC=256, None')
+        #ax1.plot(data_mp8_hc256['steps'], data_mp8_hc256['loss'], color='tab:blue', alpha=1.0, label='MP=8, HC=256, N-A2A')
+        
+
+        # ax1.plot(data_mp4_hc64['steps'], data_mp4_hc64['loss'], color='tab:green', alpha=0.2, label='MP=4, HC=64')
+        # ax1.plot(data_mp4_hc128['steps'], data_mp4_hc128['loss'], color='tab:green', alpha=0.6, label='MP=4, HC=128')
+        # ax1.plot(data_mp4_hc256['steps'], data_mp4_hc256['loss'], color='tab:green', alpha=1.0, label='MP=4, HC=256')
+
+        ax1.plot(data_mp8_hc64_last['steps'], data_mp8_hc64_last['loss'], color='tab:green', alpha=0.2, label='MP=8, HC=64, N-A2A-Last')
+
+        ax1.grid(False)
+
+        # Create a twin axis that shares the x-axis with ax1
+
+        # Plot lrs on the secondary y-axis (ax2)
+        color = 'tab:red'
+        ax2.set_ylabel('Learning Rate', color=color)
+        ax2.plot(data_mp8_hc128['steps'], data_mp8_hc128['lr'], color=color, label='LR')
+        ax2.tick_params(axis='y', labelcolor=color)
+        ax2.grid(False)
+
+        # Optionally, you can add a title and improve layout
+        fig.tight_layout()
+
+        ax1.set_yscale('log')
+        ax1.set_ylim([5e-5, 2e-1])
+        ax1.legend(prop={'size': 12})
+        plt.show(block=False)
+
+        asdf
+
+        # n_params versus time 
+        navg = 100
+        lo = 24000
+        hi = 25000
+        params_mp8_hc64 = 405059
+        loss_mp8_hc64 = data_mp8_hc64['loss'][lo:hi].mean()
+        t_fp_mp8_hc64 = data_mp8_hc64['t_fp'][lo:hi].mean()
+
+        params_mp8_hc128 = 1604739
+        loss_mp8_hc128 = data_mp8_hc128['loss'][lo:hi].mean()
+        t_fp_mp8_hc128 = data_mp8_hc128['t_fp'][lo:hi].mean()
+
+        params_mp8_hc256 = 6387971 
+        loss_mp8_hc256 = data_mp8_hc256['loss'][lo:hi].mean()
+        t_fp_mp8_hc256 = data_mp8_hc256['t_fp'][lo:hi].mean()
+
+        params_mp4_hc64 = 221763
+        loss_mp4_hc64 = data_mp4_hc64['loss'][lo:hi].mean()
+        t_fp_mp4_hc64 = data_mp4_hc64['t_fp'][lo:hi].mean()
+
+        params_mp4_hc128 = 877699
+        loss_mp4_hc128 = data_mp4_hc128['loss'][lo:hi].mean()
+        t_fp_mp4_hc128 = data_mp4_hc128['t_fp'][lo:hi].mean()
+
+        params_mp4_hc256 = 3492099
+        loss_mp4_hc256 = data_mp4_hc256['loss'][lo:hi].mean()
+        t_fp_mp4_hc256 = data_mp4_hc256['t_fp'][lo:hi].mean()
+
+        fig, ax = plt.subplots(1,2, figsize=(12,5))
+        ax[0].scatter(params_mp8_hc64, loss_mp8_hc64, color='black')
+        ax[0].scatter(params_mp8_hc128, loss_mp8_hc128, color='black')
+        ax[0].scatter(params_mp8_hc256, loss_mp8_hc256, color='red')
+        ax[0].scatter(params_mp4_hc64, loss_mp4_hc64, color='red')
+        ax[0].scatter(params_mp4_hc128, loss_mp4_hc128, color='black')
+        ax[0].scatter(params_mp4_hc256, loss_mp4_hc256, color='black')
+        ax[0].set_ylabel(f"loss [mean({lo}:{hi})]")
+        ax[0].set_xlabel("no. parameters")
+        
+        ax[1].scatter(t_fp_mp8_hc64, loss_mp8_hc64, color='black')
+        ax[1].scatter(t_fp_mp8_hc128, loss_mp8_hc128, color='black')
+        ax[1].scatter(t_fp_mp8_hc256, loss_mp8_hc256, color='red')
+        ax[1].scatter(t_fp_mp4_hc64, loss_mp4_hc64, color='red')
+        ax[1].scatter(t_fp_mp4_hc128, loss_mp4_hc128, color='black')
+        ax[1].scatter(t_fp_mp4_hc256, loss_mp4_hc256, color='black')
+        ax[1].set_ylabel(f"loss [mean({lo}:{hi})]")
+        ax[1].set_xlabel("evaluation time")
+
+        #ax.set_xscale('log')
+        #ax.set_yscale('log')
+        plt.show(block=False)
+
 
     if 1 == 0:
         """
@@ -77,14 +671,38 @@ if __name__ == "__main__":
 
     if 1 == 0:
         """
+        Consistency in training (FOR PAPER)
+        """
+        POLY = 1
+        #temp = '3_4_32_3_2_4'
+        temp = '3_4_8_3_2_4' # small
+        #temp = '3_4_32_3_5_4' # large 
+        r1 = torch.load(f"./saved_models/POLY_{POLY}_RANK_0_SIZE_1_SEED_12_{temp}_none.tar")['loss_hist_train']
+        r2 = torch.load(f"./saved_models/POLY_{POLY}_RANK_0_SIZE_8_SEED_12_{temp}_none.tar")['loss_hist_train'] 
+        r3 = torch.load(f"./saved_models/POLY_{POLY}_RANK_0_SIZE_8_SEED_12_{temp}_all_to_all.tar")['loss_hist_train']
+        lw = 2.5 
+        fig, ax = plt.subplots(figsize=(6,5))
+        ax.plot(np.arange(len(r1))+1, r1, color='black', lw=lw)
+        ax.plot(np.arange(len(r2))+1, r2, color='blue', lw=lw, ls='--')
+        ax.plot(np.arange(len(r3))+1, r3, color='red', lw=lw, ls='--')
+        ax.set_yscale('log')
+        #ax.grid(False)
+        ax.set_xlim([1,1500])
+        plt.savefig("./outputs/postproc/gnn_verification_for_paper/training_v2.png", dpi=600, transparent=True)
+        plt.show(block=False)
+
+
+
+    if 1 == 0:
+        """
         Looking at consistency in training -- loss versus iter. 
         """
         POLY = 1
         #SIZE_LIST = [1,2,4,8]
         SIZE_LIST = [1,4]
         COLOR_LIST = ['tab:blue', 'tab:orange', 'tab:red', 'tab:green']
-        HALO_LIST = ['none', 'all_to_all', 'send_recv']
-        #HALO_LIST = ['none']
+        #HALO_LIST = ['none', 'all_to_all', 'send_recv']
+        HALO_LIST = ['none', 'all_to_all']
 
         losses = [] 
         fig, ax = plt.subplots(figsize=(12,6))
@@ -134,11 +752,11 @@ if __name__ == "__main__":
         ax.set_ylabel('Loss')
         ax.set_yscale('log')
         ax.legend(fancybox=False, framealpha=1)
-        #ax.set_xlim([1,10])
+        #ax.set_xlim([1,50])
 
         plt.show(block=False)
 
-    if 1 == 1:
+    if 1 == 0:
         """
         Looking at profiler outputs (NEW -- custom timers) 
         """
@@ -174,7 +792,6 @@ if __name__ == "__main__":
             ax.plot( SIZE_LIST[i], data_none[i][qoi][-lb:-1].max(), marker='+', lw=0, ms=12, color='blue' )
         plt.show(block=False)
 
-        asdf
 
     if 1 == 0: 
         """
@@ -201,14 +818,19 @@ if __name__ == "__main__":
         # path_64 = "./outputs/postproc/real_gnn_test_3/periodic_after_fix_edges_2/gradient_data_gpu_nondeterministic_POLARIS/tgv_poly_5/float32"
 
         # new gnn 
-        path_32 = "./outputs/postproc/real_gnn_test_4/periodic_after_fix_edges_2/gradient_data_gpu_nondeterministic_POLARIS/tgv_poly_1/float32"
-        path_64 = "./outputs/postproc/real_gnn_test_4/periodic_after_fix_edges_2/gradient_data_gpu_nondeterministic_POLARIS/tgv_poly_1/float32"
+        # path_32 = "./outputs/postproc/real_gnn_test_4/periodic_after_fix_edges_2/gradient_data_gpu_nondeterministic_POLARIS/tgv_poly_1/float32"
+        # path_64 = "./outputs/postproc/real_gnn_test_4/periodic_after_fix_edges_2/gradient_data_gpu_nondeterministic_POLARIS/tgv_poly_1/float32"
 
-        SIZE_LIST = [1,2,4,8]
-        #SIZE_LIST = [1,2,4,8,16,32] 
+        # For paper: 
+        path_32 = "./outputs/postproc/gnn_verification_for_paper/tgv_poly_1/float32"
+        path_64 = "./outputs/postproc/gnn_verification_for_paper/tgv_poly_1/float32"
+
+
+        #SIZE_LIST = [1,2,4,8]
+        SIZE_LIST = [1,2,4,8,16,32,64] 
         #SIZE_LIST = [4,8,16,32] 
         #SIZE_LIST = [8,16,32] 
-        HALO_MODE_LIST = ['none', 'all_to_all', 'send_recv']
+        HALO_MODE_LIST = ['none', 'all_to_all']
         #HALO_MODE_LIST = ['all_to_all']
         #HALO_MODE_LIST = ['sendrecv']
 
@@ -236,7 +858,8 @@ if __name__ == "__main__":
                     # New gnn format: 
                     mp = 4
                     seed = 12
-                    str_temp = f"POLY_1_RANK_{RANK}_SIZE_{SIZE}_SEED_{seed}_3_4_32_3_2_{mp}_{halo_mode}.tar" 
+                    #str_temp = f"POLY_1_RANK_{RANK}_SIZE_{SIZE}_SEED_{seed}_3_4_32_3_2_{mp}_{halo_mode}.tar" 
+                    str_temp = f"POLY_1_RANK_{RANK}_SIZE_{SIZE}_SEED_{seed}_3_4_8_3_2_{mp}_{halo_mode}.tar" 
 
                     a = torch.load(path_32 + "/" + str_temp, map_location=torch.device('cpu')) 
                     #data_temp_32[RANK, :3] = a['total_sum_x_scaled']
@@ -257,59 +880,59 @@ if __name__ == "__main__":
                 data_32[halo_mode].append(data_temp_32)
                 data_64[halo_mode].append(data_temp_64)
 
-        # Plot components 
-        ms=250
-        colors={'none': 'red', 'all_to_all': 'blue', 'send_recv': 'green'}
-        ls={'none': '-', 'all_to_all': '-.', 'send_recv': '--'}
-        fig, ax = plt.subplots(1,3,figsize=(16,5))
-        for comp in range(3):
-            for i in range(len(SIZE_LIST)): 
-                for halo_mode in HALO_MODE_LIST: 
-                    SIZE = SIZE_LIST[i]
-                    ax[comp].scatter(np.ones(SIZE)*SIZE, data_32[halo_mode][i][:,comp], marker='^', 
-                               color=colors[halo_mode], s=ms, facecolors='none',
-                               linestyle=ls[halo_mode], linewidth=2,
-                               label="CPU, FP32" if i == 0 else None)
+        # # Plot components 
+        # ms=250
+        # colors={'none': 'red', 'all_to_all': 'blue', 'send_recv': 'green'}
+        # ls={'none': '-', 'all_to_all': '-.', 'send_recv': '--'}
+        # fig, ax = plt.subplots(1,3,figsize=(16,5))
+        # for comp in range(3):
+        #     for i in range(len(SIZE_LIST)): 
+        #         for halo_mode in HALO_MODE_LIST: 
+        #             SIZE = SIZE_LIST[i]
+        #             ax[comp].scatter(np.ones(SIZE)*SIZE, data_32[halo_mode][i][:,4], marker='^', 
+        #                        color=colors[halo_mode], s=ms, facecolors='none',
+        #                        linestyle=ls[halo_mode], linewidth=2,
+        #                        label="CPU, FP32" if i == 0 else None)
 
-                    ax[comp].scatter(np.ones(SIZE)*SIZE, data_64[halo_mode][i][:,comp], marker='s', 
-                               color=colors[halo_mode], s=ms, facecolors='none', 
-                               linestyle=ls[halo_mode], linewidth=2, 
-                               label="CPU, FP64" if i == 0 else None)
+        #             # ax[comp].scatter(np.ones(SIZE)*SIZE, data_64[halo_mode][i][:,4], marker='s', 
+        #             #            color=colors[halo_mode], s=ms, facecolors='none', 
+        #             #            linestyle=ls[halo_mode], linewidth=2, 
+        #             #            label="CPU, FP64" if i == 0 else None)
 
-                    ax[comp].set_title('Component %d' %(comp))
-                    ax[comp].set_xlabel('Number of Ranks')
+        #             ax[comp].set_title('Component %d' %(comp))
+        #             ax[comp].set_xlabel('Number of Ranks')
 
-                    #ax[comp].set_ylim([0.0766, 0.0770])
-                    ax[comp].set_xlim([0.9, 40])
-                    ax[comp].set_xscale('log')
-        #ax.set_xscale('log')
-        #ax[0].legend(fancybox=False, framealpha=1, edgecolor='black', prop={'size': 14})
-        plt.show(block=False)
-
-        # # Plot loss
-        # ms=200
-        # colors={'none': 'black', 'all_to_all': 'blue'}
-        # fig, ax = plt.subplots(figsize=(6,5))
-        # for i in range(len(SIZE_LIST)): 
-        #     for halo_mode in HALO_MODE_LIST: 
-        #         SIZE = SIZE_LIST[i]
-
-        #         ax.scatter(np.ones(SIZE)*SIZE, data_32[halo_mode][i][:,4], marker='^', 
-        #                    color=colors[halo_mode], s=ms, facecolors='none', 
-        #                    label="CPU, FP32" if i == 0 else None)
-
-        #         ax.scatter(np.ones(SIZE)*SIZE, data_64[halo_mode][i][:,4], marker='s', 
-        #                    color=colors[halo_mode], s=ms, facecolors='none', 
-        #                    label="CPU, FP64" if i == 0 else None)
-
-        #         ax.set_title('Loss')
-        #         ax.set_xlabel('Number of Ranks')
-
+        #             #ax[comp].set_ylim([0.0766, 0.0770])
+        #             ax[comp].set_xlim([0.9, 40])
+        #             ax[comp].set_xscale('log')
         # #ax.set_xscale('log')
-        # #ax.legend(fancybox=False, framealpha=1, edgecolor='black', prop={'size': 14})
-        # ax.set_ylim([0.0763, 0.0768])
+        # #ax[0].legend(fancybox=False, framealpha=1, edgecolor='black', prop={'size': 14})
         # plt.show(block=False)
 
+        
+        # Plot loss -- FOR PAPER 
+        ms=120
+        colors={'none': 'black', 'all_to_all': 'red', 'send_recv': 'green'}
+        markers={'none': 's', 'all_to_all': 'o'}
+        ls={'none': '-', 'all_to_all': '-', 'send_recv': '-'}
+        fig, ax = plt.subplots(figsize=(6,5))
+        for i in range(len(SIZE_LIST)): 
+            for halo_mode in HALO_MODE_LIST: 
+                SIZE = SIZE_LIST[i]
+                ax.scatter(np.ones(SIZE)*SIZE, data_32[halo_mode][i][:,4], marker=markers[halo_mode], 
+                           color=colors[halo_mode], s=ms, facecolors=colors[halo_mode],
+                           linestyle=ls[halo_mode], linewidth=2,
+                           label="CPU, FP32" if i == 0 else None)
+        ax.set_xlabel('Number of Ranks')
+        ax.set_ylabel('Loss')
+        #ax.set_xlim([0.9, 40])
+        ax.set_xscale('log')
+        #ax[0].legend(fancybox=False, framealpha=1, edgecolor='black', prop={'size': 14})
+        #plt.savefig('./outputs/postproc/gnn_verification_for_paper/consistency_v2.png', dpi=600, transparent=True)
+        plt.show(block=False)
+
+
+        
 
     if 1 == 0:
         """
@@ -775,17 +1398,77 @@ if __name__ == "__main__":
         for i in range(len(b)):
             b_keys.append(b[i].key)
 
-
-
         c = [item for item in a if item not in b]
 
 
 
+    if 1 == 0:
+        """
+        check multiscale 
+        """
+
+        gnn_outputs_path = "./outputs/temp/gnn_outputs_poly_3"
+        #gnn_outputs_path = "./outputs/temp/gnn_outputs_poly_3_multiscale"
+        path_to_pos = f"{gnn_outputs_path}/pos_node_rank_0_size_8.bin"
+        path_to_ei = f"{gnn_outputs_path}/edge_index_rank_0_size_8.bin"
+        path_to_eid = f"{gnn_outputs_path}/node_element_ids_rank_0_size_8.bin"
+
+        pos = np.fromfile(path_to_pos, dtype=np.float64).reshape((-1,3))
+        ei = np.fromfile(path_to_ei, dtype=np.int32).reshape((-1,2)).T 
+        ei = ei.astype(np.int64)
+        eid = np.fromfile(path_to_eid, dtype=np.int32)
+
+        # Plot graph 
+        element_id = 0
+        mask = eid == element_id
+        pos_e = pos[mask]
+       
+        send = list(ei[0,:])
+        recv = list(ei[1,:])
+        last_idx = len(recv) - recv[::-1].index(63) - 1
+        ei_e = ei[:, :last_idx]
 
 
+        # remove all edges above 63 
+        send = ei_e[0,:]
+        idx_keep = send <= 63
+        ei_e = ei_e[:, idx_keep]
+
+
+        from torch_geometric.data import Data
+        import torch_geometric.utils as utils
+
+        data_plot = Data(pos = torch.tensor(pos_e), x = torch.tensor(pos_e), edge_index = torch.tensor(ei_e)) 
+        G = utils.to_networkx(data=data_plot)
+        pos = dict(enumerate(np.array(data_plot.pos)))
+        node_xyz = np.array([pos[v] for v in sorted(G)])
+        edge_xyz = np.array([(pos[u], pos[v]) for u, v in G.edges()])
+        pos = data_plot.pos
+        ms = 100
+        lw_edge = 2 
+        lw_marker = 0.1 
+
+        fig = plt.figure(figsize=(12,8))
+        ax = fig.add_subplot(111, projection="3d")
         
+        # Plot the edges
+        count = 0 
+        for vizedge in edge_xyz:
+            ax.plot(*vizedge.T, color="black", lw=lw_edge, alpha=0.1)
+            #ax.plot(*vizedge.T, color="black", alpha=0.3)
+            count += 1
 
+        # plot the nodes 
+        #ax.scatter(*pos.T, s=ms, ec='none', lw=lw_marker, c='red', alpha=1)
+        ax.scatter(*pos.T, s=ms, ec='black', lw=lw_marker, c=pos[:,2], alpha=1, cmap='Reds')
 
-
-
+        ax.set_axis_off()
+        ax.grid(False)
+        ax.set_xlabel("x")
+        ax.set_ylabel("y")
+        ax.set_zlabel("z")
+        ax.view_init(elev=34, azim=-24, roll=0)
+        ax.set_aspect('equal')
+        fig.tight_layout()
+        plt.show(block=False)
 
