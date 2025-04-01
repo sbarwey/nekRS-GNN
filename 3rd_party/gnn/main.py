@@ -475,6 +475,17 @@ class Trainer:
                            n_messagePassing_layers,
                            halo_swap_mode,
                            name)
+
+        if self.cfg.model_ic == "random":
+            if RANK == 0: log.info("Using random parameter initialization.")
+        else:
+            if not os.path.exists(self.cfg.model_ic):
+                raise FileNotFoundError(f"Model initial condition file not found: {self.cfg.model_ic}. Check model_ic input variable in cfg file. Set model_ic=random if random initialization is desired.")
+            else:
+                a = torch.load(self.cfg.model_ic)
+                model.load_state_dict(a['state_dict'])
+                if RANK == 0: log.info(f"Using pre-trained model initialization at {self.cfg.model_ic}")
+
         return model
 
     def count_weights(self, model) -> int:

@@ -12,28 +12,31 @@ restart: False
 master_addr: none
 master_port: none
 
+# data statistics location for scaling 
+data_stats_path: /lus/eagle/projects/datascience/sbarwey/codes/nek/nekrs_cases/examples_v23_gnn/bfs_2/traj_poly_3/DT_1EM2_10k_snaps/data_stats.npz
+
 # use residual when training. if true: pred = x_in + gnn. if false: pred = gnn 
 use_residual: False
 
 # learning rate schedule 
 phase1_steps: 1000 
 phase2_steps: 50000
-phase3_steps: 0
+phase3_steps: 10000
 lr_phase12: 0.001
 lr_phase23: 0.0000003
 
-# arch properties -- small gnn 
-#hidden_channels: 8
-#n_mlp_hidden_layers: 2
-#n_messagePassing_layers: 4
-
-# arch properties -- large gnn 
+# arch properties
 hidden_channels: 32
 n_mlp_hidden_layers: 5
 n_messagePassing_layers: 4
+model_ic: random 
+
+# model name prefix 
+model_name_prefix: DISTGNN
 
 # Number of training rollout steps
-rollout_steps: 1
+max_rollout_steps: 6
+pushforward_trick: true
 
 # Halo swap mode 
 halo_swap_mode : none
