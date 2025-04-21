@@ -69,6 +69,7 @@ gnn_t::gnn_t(nrs_t *nrs_)
     halo_unique_mask = new dlong[N]();
     graphNodes = (graphNode_t*) calloc(N, sizeof(graphNode_t)); // full domain
     graphNodes_element = (graphNode_t*) calloc(mesh->Np, sizeof(graphNode_t)); // a single element
+    rst_node = new dfloat[mesh->Np * 3]();
 
     if (verbose) printf("\n[RANK %d] -- Finished instantiating gnn_t object\n", rank);
     if (verbose) printf("[RANK %d] -- The number of elements is %d \n", rank, mesh->Nelements);
@@ -81,6 +82,7 @@ gnn_t::~gnn_t()
     delete[] node_element_ids;
     delete[] local_unique_mask;
     delete[] halo_unique_mask;
+    delete[] rst_node;
     free(localNodes);
     free(haloNodes);
     free(graphNodes);
@@ -148,6 +150,7 @@ void gnn_t::gnnWrite()
     // Writing as binary files: 
     write_edge_index_binary(writePath + "/edge_index" + irank + nranks + ".bin");
     writeToFileBinary(writePath + "/pos_node" + irank + nranks + ".bin", pos_node, N, 3);
+    writeToFileBinary(writePath + "/rst_node" + irank + nranks + ".bin", rst_node, mesh->Np, 3);
     writeToFileBinary(writePath + "/node_element_ids" + irank + nranks + ".bin", node_element_ids, N, 1); 
     writeToFileBinary(writePath + "/local_unique_mask" + irank + nranks + ".bin", local_unique_mask, N, 1); 
     writeToFileBinary(writePath + "/halo_unique_mask" + irank + nranks + ".bin", halo_unique_mask, N, 1); 
@@ -738,5 +741,26 @@ void gnn_t::write_edge_index_element_local_vertex_binary(const std::string& file
             file_cpu.write(reinterpret_cast<const char*>(&idx_nei), sizeof(dlong));
             file_cpu.write(reinterpret_cast<const char*>(&idx_own), sizeof(dlong));
         }
+    }
+}
+
+void gnn_t::write_element_local_rst(const std::string& filename)
+{
+    
+    // mesh->r = (dfloat*) malloc(mesh->Np * sizeof(dfloat));
+    // mesh->s = (dfloat*) malloc(mesh->Np * sizeof(dfloat));
+    // mesh->t = (dfloat*) malloc(mesh->Np * sizeof(dfloat));
+
+    // loop through nodes for first element
+    for (int i = 0; i < mesh->Np; i++)
+    {
+        // get rst coords
+        dfloat r = mesh->r[i]; 
+        dfloat s = mesh->s[i]; 
+        dfloat t = mesh->t[i];
+
+        rst_node[i + 0*mesh->Np] = r; 
+        rst_node[i + 1*mesh->Np] = s;
+        rst_node[i + 2*mesh->Np] = t;
     }
 }

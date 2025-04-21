@@ -50,6 +50,7 @@ private:
     dlong *node_element_ids;
     dlong *local_unique_mask;
     dlong *halo_unique_mask;
+    dfloat *rst_node;
 
     // node objects 
     parallelNode_t *localNodes;
@@ -76,6 +77,7 @@ private:
     void write_edge_index(const std::string& filename);
     void write_edge_index_element_local(const std::string& filename);
     void write_edge_index_element_local_vertex(const std::string& filename);
+    void write_element_local_rst(const std::string& filename);
 
     // binary write functions 
     void write_edge_index_binary(const std::string& filename);
