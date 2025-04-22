@@ -172,13 +172,13 @@ def get_grad_data(SIZE, keys, halo_mode_list):
 
 if __name__ == "__main__":
 
-    if 1 == 0:
+    if 1 == 1:
         """
         [INFERENCE] - Plot rollout errors versus step for each feature 
         """
         def get_ordered_files(dir_path, header):
             # List files that start with the header
-            files = [f for f in os.listdir(dir_path) if f.startswith(header)]
+            files = [f for f in os.listdir(dir_path) if f.startswith(header) and not f.endswith('.png')]
 
             # Sort files based on the numeric part after the header and underscore
             files.sort(key=lambda f: int(re.search(r'_(\d+)', f).group(1)))
@@ -203,39 +203,62 @@ if __name__ == "__main__":
             
             return np.stack(traj_data, axis=0)
 
-        inference_path = "/Volumes/Novus_SB_14TB/nek/nekRS-GNN-devel/3rd_party/gnn/outputs/inference"
+        # inference_path = "/Volumes/Novus_SB_14TB/nek/nekRS-GNN-devel/3rd_party/gnn/outputs/inference"
+        inference_path = "./outputs/inference"
         trajectories = ["rollout_1", "rollout_2", "rollout_3", "rollout_4", "rollout_5"]
 
-        model_name = "POLY_3_SIZE_32_SEED_64_RESID_3_4_64_3_2_8_none"
-        err_64_none = get_traj_data(inference_path, trajectories, model_name)
-        err_64_none = np.abs(err_64_none).mean(axis=2)
+        # model_name = "POLY_3_SIZE_32_SEED_64_RESID_3_4_64_3_2_8_none"
+        # err_64_none = get_traj_data(inference_path, trajectories, model_name)
+        # err_64_none = np.abs(err_64_none).mean(axis=2)
 
-        model_name = "POLY_3_SIZE_32_SEED_64_RESID_3_4_64_3_2_8_all_to_all_opt"
-        err_64_a2a = get_traj_data(inference_path, trajectories, model_name)
-        err_64_a2a = np.abs(err_64_a2a).mean(axis=2)
+        # model_name = "POLY_3_SIZE_32_SEED_64_RESID_3_4_64_3_2_8_all_to_all_opt"
+        # err_64_a2a = get_traj_data(inference_path, trajectories, model_name)
+        # err_64_a2a = np.abs(err_64_a2a).mean(axis=2)
 
-        model_name = "POLY_3_SIZE_32_SEED_64_RESID_3_4_128_3_2_8_none"
-        err_128_none = get_traj_data(inference_path, trajectories, model_name)
-        err_128_none = np.abs(err_128_none).mean(axis=2)
+        # model_name = "POLY_3_SIZE_32_SEED_64_RESID_3_4_128_3_2_8_none"
+        # err_128_none = get_traj_data(inference_path, trajectories, model_name)
+        # err_128_none = np.abs(err_128_none).mean(axis=2)
+
+        # model_name = "POLY_3_SIZE_32_SEED_64_RESID_3_4_128_3_2_8_all_to_all_opt"
+        # err_128_a2a = get_traj_data(inference_path, trajectories, model_name)
+        # err_128_a2a = np.abs(err_128_a2a).mean(axis=2)
+
+        # model_name = "POLY_3_SIZE_32_SEED_64_RESID_3_4_256_3_2_8_none"
+        # err_256_none = get_traj_data(inference_path, trajectories, model_name)
+        # err_256_none = np.abs(err_256_none).mean(axis=2)
+
+        # model_name = "POLY_3_SIZE_32_SEED_64_RESID_3_4_256_3_2_8_all_to_all_opt"
+        # err_256_a2a = get_traj_data(inference_path, trajectories, model_name)
+        # err_256_a2a = np.abs(err_256_a2a).mean(axis=2)
+
+        # err_list = [err_64_none, err_128_none, err_256_none, 
+        #             err_64_a2a, err_128_a2a, err_256_a2a]
+        # color_list = ["red", "red", "red", "blue", "blue", "blue"]
+        # ls_list = ["-", "--", "-.", "-", "--", "-.",]               
+        # label_list = ["HC=64, None", "HC=128, None", "HC=256, None", 
+        #               "HC=64, N-A2A", "HC=128, N-A2A", "HC=256, N-A2A"]
+
 
         model_name = "POLY_3_SIZE_32_SEED_64_RESID_3_4_128_3_2_8_all_to_all_opt"
-        err_128_a2a = get_traj_data(inference_path, trajectories, model_name)
-        err_128_a2a = np.abs(err_128_a2a).mean(axis=2)
+        err_128_a2a_1 = get_traj_data(inference_path, trajectories, model_name)
+        err_128_a2a_1 = np.abs(err_128_a2a_1).mean(axis=2)
 
-        model_name = "POLY_3_SIZE_32_SEED_64_RESID_3_4_256_3_2_8_none"
-        err_256_none = get_traj_data(inference_path, trajectories, model_name)
-        err_256_none = np.abs(err_256_none).mean(axis=2)
+        model_name = "ROLLOUT_2_POLY_3_SIZE_32_SEED_64_RESID_3_4_128_3_2_8_all_to_all_opt"
+        err_128_a2a_2 = get_traj_data(inference_path, trajectories, model_name)
+        err_128_a2a_2 = np.abs(err_128_a2a_2).mean(axis=2)
 
-        model_name = "POLY_3_SIZE_32_SEED_64_RESID_3_4_256_3_2_8_all_to_all_opt"
-        err_256_a2a = get_traj_data(inference_path, trajectories, model_name)
-        err_256_a2a = np.abs(err_256_a2a).mean(axis=2)
+        model_name = "ROLLOUT_5_POLY_3_SIZE_32_SEED_64_RESID_3_4_128_3_2_8_all_to_all_opt"
+        err_128_a2a_5 = get_traj_data(inference_path, trajectories, model_name)
+        err_128_a2a_5 = np.abs(err_128_a2a_5).mean(axis=2)
 
-        err_list = [err_64_none, err_128_none, err_256_none, 
-                    err_64_a2a, err_128_a2a, err_256_a2a]
-        color_list = ["red", "red", "red", "blue", "blue", "blue"]
-        ls_list = ["-", "--", "-.", "-", "--", "-.",]               
-        label_list = ["HC=64, None", "HC=128, None", "HC=256, None", 
-                      "HC=64, N-A2A", "HC=128, N-A2A", "HC=256, N-A2A"]
+        model_name = "ROLLOUT_10_POLY_3_SIZE_32_SEED_64_RESID_3_4_128_3_2_8_all_to_all_opt"
+        err_128_a2a_10 = get_traj_data(inference_path, trajectories, model_name)
+        err_128_a2a_10 = np.abs(err_128_a2a_10).mean(axis=2)
+
+        err_list = [err_128_a2a_1, err_128_a2a_2, err_128_a2a_5, err_128_a2a_10]
+        color_list = ["red", "blue", "blue", "blue"]
+        ls_list = ["-", "-", "--", "-.",]               
+        label_list = ["K=1", "K=2", "K=5", "K=10"]
 
         # Determine the number of features from the first dataset (assumed common to all)
         num_features = 3
@@ -270,10 +293,11 @@ if __name__ == "__main__":
             #ax.set_yscale('log')
             #ax.set_xscale('log')
             ax.set_ylim([0,0.02])
-            #ax.legend(fancybox=False, framealpha=1, prop={'size': 10})
+            ax.legend(fancybox=False, framealpha=1, prop={'size': 10})
 
         plt.tight_layout()
         plt.show(block=False)
+        plt.savefig('figure.png')
         
         asdf
 
