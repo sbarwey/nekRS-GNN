@@ -172,7 +172,113 @@ def get_grad_data(SIZE, keys, halo_mode_list):
 
 if __name__ == "__main__":
 
-    if 1 == 1:
+    if 1 == 0:
+        """
+        [INFERENCE] - Plot rollout errors versus step for each feature 
+        """
+        def get_ordered_files(dir_path, header):
+            # List files that start with the header
+            files = [f for f in os.listdir(dir_path) if f.startswith(header)]
+
+            # Sort files based on the numeric part after the header and underscore
+            files.sort(key=lambda f: int(re.search(r'_(\d+)', f).group(1)))
+
+            # Return full file paths
+            return [os.path.join(dir_path, f) for f in files]
+
+        def get_traj_data(inference_path, trajectories, model_name, header="error"):
+            traj_data = []
+            for traj in trajectories:
+                datapath = os.path.join(inference_path, traj, model_name)
+                files = get_ordered_files(datapath, header)
+                
+                data = []
+                print(f"Reading trajectory {traj} from {datapath}...")
+                for file in files:
+                    data.append(np.load(file))
+                
+                # Stack the list of arrays along a new batch dimension
+                data = np.stack(data, axis=0)
+                traj_data.append(data)
+            
+            return np.stack(traj_data, axis=0)
+
+        inference_path = "/Volumes/Novus_SB_14TB/nek/nekRS-GNN-devel/3rd_party/gnn/outputs/inference"
+        trajectories = ["rollout_1", "rollout_2", "rollout_3", "rollout_4", "rollout_5"]
+
+        model_name = "POLY_3_SIZE_32_SEED_64_RESID_3_4_64_3_2_8_none"
+        err_64_none = get_traj_data(inference_path, trajectories, model_name)
+        err_64_none = np.abs(err_64_none).mean(axis=2)
+
+        model_name = "POLY_3_SIZE_32_SEED_64_RESID_3_4_64_3_2_8_all_to_all_opt"
+        err_64_a2a = get_traj_data(inference_path, trajectories, model_name)
+        err_64_a2a = np.abs(err_64_a2a).mean(axis=2)
+
+        model_name = "POLY_3_SIZE_32_SEED_64_RESID_3_4_128_3_2_8_none"
+        err_128_none = get_traj_data(inference_path, trajectories, model_name)
+        err_128_none = np.abs(err_128_none).mean(axis=2)
+
+        model_name = "POLY_3_SIZE_32_SEED_64_RESID_3_4_128_3_2_8_all_to_all_opt"
+        err_128_a2a = get_traj_data(inference_path, trajectories, model_name)
+        err_128_a2a = np.abs(err_128_a2a).mean(axis=2)
+
+        model_name = "POLY_3_SIZE_32_SEED_64_RESID_3_4_256_3_2_8_none"
+        err_256_none = get_traj_data(inference_path, trajectories, model_name)
+        err_256_none = np.abs(err_256_none).mean(axis=2)
+
+        model_name = "POLY_3_SIZE_32_SEED_64_RESID_3_4_256_3_2_8_all_to_all_opt"
+        err_256_a2a = get_traj_data(inference_path, trajectories, model_name)
+        err_256_a2a = np.abs(err_256_a2a).mean(axis=2)
+
+        err_list = [err_64_none, err_128_none, err_256_none, 
+                    err_64_a2a, err_128_a2a, err_256_a2a]
+        color_list = ["red", "red", "red", "blue", "blue", "blue"]
+        ls_list = ["-", "--", "-.", "-", "--", "-.",]               
+        label_list = ["HC=64, None", "HC=128, None", "HC=256, None", 
+                      "HC=64, N-A2A", "HC=128, N-A2A", "HC=256, N-A2A"]
+
+        # Determine the number of features from the first dataset (assumed common to all)
+        num_features = 3
+        steps = np.arange(err_list[0].shape[1])+1
+
+        # Create a subplot for each feature
+        fig, axes = plt.subplots(1, num_features, figsize=(5*num_features, 5), sharex=True, sharey=True)
+
+        # Loop over each feature
+        for feature in range(num_features):
+            ax = axes[feature] if num_features > 1 else axes
+            
+            # Loop over each dataset
+            for err, color, ls, label in zip(err_list, color_list, ls_list, label_list):
+                # Extract data for this feature (across trajectories and steps)
+                feature_data = err[:, :, feature]
+                
+                # Compute statistics along the trajectory axis (axis=0)
+                avg = feature_data.mean(axis=0)
+                min_val = feature_data.min(axis=0)
+                max_val = feature_data.max(axis=0)
+                
+                # Plot the average as a bold line with the given style and label
+                line = ax.plot(steps, avg, linewidth=2, color=color, linestyle=ls, label=label)[0]
+                
+                # Fill between the min and max bounds with a transparent shade of the same color
+                ax.fill_between(steps, min_val, max_val, color=color, alpha=0.3)
+            
+            ax.set_title(f'Feature {feature}')
+            ax.set_xlabel('Step')
+            ax.set_ylabel('Abs. Error')
+            #ax.set_yscale('log')
+            #ax.set_xscale('log')
+            ax.set_ylim([0,0.02])
+            #ax.legend(fancybox=False, framealpha=1, prop={'size': 10})
+
+        plt.tight_layout()
+        plt.show(block=False)
+        
+        asdf
+
+
+    if 1 == 0:
         from scipy.stats import norm
         """
         [INFERENCE] Plot error distributions for single-step predictions 
@@ -221,7 +327,6 @@ if __name__ == "__main__":
         plt.show(block=False)
 
         asdf
-
 
     if 1 == 0:
         """
@@ -511,17 +616,30 @@ if __name__ == "__main__":
 
 
         # Aside: plot loss from log 
-        #log_file_path_list = ["./outputs/logs/distgnn_bfs.o3111215", 
-        #                      "./outputs/logs/distgnn_bfs.o3111374",
-        #                      "./outputs/logs/distgnn_bfs.o3111445",
-        #                      "./outputs/logs/distgnn_bfs.o3111594"]
+        """
+        MP = 8 , HC = 128 
+        """
         log_file_path_list = ["./saved_models/bfs_factor_dt_1em2_10k_snaps/bfs_factor_10/dgnn_bfs_8_128_na2a.o3742127"]
         data_mp8_hc128 = plot_from_log(log_file_path_list, N_skip=224)
 
         log_file_path_list = ["./saved_models/bfs_factor_dt_1em2_10k_snaps/bfs_factor_10/dgnn_bfs_8_128_none.o3742130"]
         data_mp8_hc128_none = plot_from_log(log_file_path_list, N_skip=224)
 
-        #log_file_path_list = ["./outputs/logs/distgnn_bfs.o3111704"]
+        log_file_path_list = ["./saved_models/bfs_factor_dt_1em2_10k_snaps/bfs_factor_10/dgnn_bfs_8_128_na2a_rollout_2.o4193382"]
+        data_mp8_hc128_ro2 = plot_from_log(log_file_path_list, N_skip=224)
+
+        log_file_path_list = ["./saved_models/bfs_factor_dt_1em2_10k_snaps/bfs_factor_10/dgnn_bfs_8_128_na2a_rollout_5.o4193412"]
+        data_mp8_hc128_ro5 = plot_from_log(log_file_path_list, N_skip=224)
+
+        log_file_path_list = ["./saved_models/bfs_factor_dt_1em2_10k_snaps/bfs_factor_10/dgnn_bfs_8_128_na2a_rollout_10.o4193413"]
+        data_mp8_hc128_ro10 = plot_from_log(log_file_path_list, N_skip=224)
+
+        log_file_path_list = ["./saved_models/bfs_factor_dt_1em2_10k_snaps/bfs_factor_10/dgnn_bfs_8_128_na2a_rollout_1.o4292127"]
+        data_mp8_hc128_ro1 = plot_from_log(log_file_path_list, N_skip=224)
+
+        """
+        MP = 8, HC = 64
+        """
         log_file_path_list = ["./saved_models/bfs_factor_dt_1em2_10k_snaps/bfs_factor_10/dgnn_bfs_8_64_na2a.o3742126"]
         data_mp8_hc64 = plot_from_log(log_file_path_list, N_skip=224)
 
@@ -531,46 +649,49 @@ if __name__ == "__main__":
         log_file_path_list = ["./saved_models/bfs_factor_dt_1em2_10k_snaps/bfs_factor_10/dgnn_bfs_8_64_na2a_varcons.o3742168"]
         data_mp8_hc64_last = plot_from_log(log_file_path_list, N_skip=224)
         
-        #log_file_path_list = ["./outputs/logs/distgnn_bfs.o3111691",
-        #                    "./outputs/logs/distgnn_bfs.o3111805",
-        #                    "./outputs/logs/distgnn_bfs.o3112405",
-        #                    "./outputs/logs/distgnn_bfs.o3111893",
-        #                    "./outputs/logs/distgnn_bfs.o3112405"]
+        """
+        MP = 8, HC = 256
+        """
         log_file_path_list = ["./saved_models/bfs_factor_dt_1em2_10k_snaps/bfs_factor_10/dgnn_bfs_8_256_na2a.o3742128"]
         data_mp8_hc256 = plot_from_log(log_file_path_list, N_skip=224)
 
         log_file_path_list = ["./saved_models/bfs_factor_dt_1em2_10k_snaps/bfs_factor_10/dgnn_bfs_8_256_none.o3742131"]
         data_mp8_hc256_none = plot_from_log(log_file_path_list, N_skip=224)
 
-        #log_file_path_list = ["./outputs/logs/distgnn_bfs_mp4.o3111717"]
-        #data_mp4_hc64 = plot_from_log(log_file_path_list, N_skip=224)
-        #log_file_path_list = ["./outputs/logs/distgnn_bfs_mp4.o3111719"]
-        #data_mp4_hc128 = plot_from_log(log_file_path_list, N_skip=224)
-        #log_file_path_list = ["./outputs/logs/distgnn_bfs_mp4.o3111720"]
-        #data_mp4_hc256 = plot_from_log(log_file_path_list, N_skip=224)
 
-        # Assume you have numpy arrays: steps, losses, lrs
         fig, ax1 = plt.subplots(figsize=(8,7))
         ax2 = ax1.twinx()
 
-        # Plot losses on the primary y-axis (ax1)
         ax1.set_xlabel('Step')
         ax1.set_ylabel('Loss')
-        ax1.plot(data_mp8_hc64_none['steps'], data_mp8_hc64_none['loss'], color='tab:red', alpha=0.2, label='MP=8, HC=64, None')
-        ax1.plot(data_mp8_hc64['steps'], data_mp8_hc64['loss'], color='tab:blue', alpha=0.2, label='MP=8, HC=64, N-A2A')
 
-        #ax1.plot(data_mp8_hc128_none['steps'], data_mp8_hc128_none['loss'], color='tab:red', alpha=0.6, label='MP=8, HC=128, None')
-        #ax1.plot(data_mp8_hc128['steps'], data_mp8_hc128['loss'], color='tab:blue', alpha=0.6, label='MP=8, HC=128, N-A2A')
+        # # Compare hc = 64, 128, 256 with and without halo 
+        # ax1.plot(data_mp8_hc64_none['steps'], data_mp8_hc64_none['loss'], color='tab:red', alpha=0.2, label='MP=8, HC=64, None')
+        # ax1.plot(data_mp8_hc64['steps'], data_mp8_hc64['loss'], color='tab:blue', alpha=0.2, label='MP=8, HC=64, N-A2A')
 
-        #ax1.plot(data_mp8_hc256_none['steps'], data_mp8_hc256_none['loss'], color='tab:red', alpha=1.0, label='MP=8, HC=256, None')
-        #ax1.plot(data_mp8_hc256['steps'], data_mp8_hc256['loss'], color='tab:blue', alpha=1.0, label='MP=8, HC=256, N-A2A')
+        # ax1.plot(data_mp8_hc128_none['steps'], data_mp8_hc128_none['loss'], color='tab:red', alpha=0.6, label='MP=8, HC=128, None')
+        # ax1.plot(data_mp8_hc128['steps'], data_mp8_hc128['loss'], color='tab:blue', alpha=0.6, label='MP=8, HC=128, N-A2A')
+
+        # ax1.plot(data_mp8_hc256_none['steps'], data_mp8_hc256_none['loss'], color='tab:red', alpha=1.0, label='MP=8, HC=256, None')
+        # ax1.plot(data_mp8_hc256['steps'], data_mp8_hc256['loss'], color='tab:blue', alpha=1.0, label='MP=8, HC=256, N-A2A')
+
+        # Message passing only in last layer
+        # ax1.plot(data_mp8_hc64_last['steps'], data_mp8_hc64_last['loss'], color='tab:green', alpha=0.2, label='MP=8, HC=64, N-A2A-Last')
+
+        # Compare with rollout fine-tuning
+        ax1.plot(data_mp8_hc128['steps'], data_mp8_hc128['loss'], color='tab:blue', alpha=0.6, label='MP=8, HC=128, N-A2A')
+
+        ax1.plot(data_mp8_hc128_ro2['steps'] + data_mp8_hc128['steps'][-1], 
+                 data_mp8_hc128_ro2['loss'], color='tab:orange', alpha=0.6, label='K_max=2')
         
-
-        # ax1.plot(data_mp4_hc64['steps'], data_mp4_hc64['loss'], color='tab:green', alpha=0.2, label='MP=4, HC=64')
-        # ax1.plot(data_mp4_hc128['steps'], data_mp4_hc128['loss'], color='tab:green', alpha=0.6, label='MP=4, HC=128')
-        # ax1.plot(data_mp4_hc256['steps'], data_mp4_hc256['loss'], color='tab:green', alpha=1.0, label='MP=4, HC=256')
-
-        ax1.plot(data_mp8_hc64_last['steps'], data_mp8_hc64_last['loss'], color='tab:green', alpha=0.2, label='MP=8, HC=64, N-A2A-Last')
+        ax1.plot(data_mp8_hc128_ro5['steps'] + data_mp8_hc128['steps'][-1], 
+                 data_mp8_hc128_ro5['loss'], color='tab:green', alpha=0.6, label='K_max=5')
+        
+        ax1.plot(data_mp8_hc128_ro10['steps'] + data_mp8_hc128['steps'][-1], 
+                 data_mp8_hc128_ro10['loss'], color='tab:red', alpha=0.6, label='K_max=10')
+        
+        ax1.plot(data_mp8_hc128_ro1['steps'] + data_mp8_hc128['steps'][-1], 
+                 data_mp8_hc128_ro1['loss'], color='blue', alpha=0.6, label='K_max=1')
 
         ax1.grid(False)
 
@@ -590,6 +711,8 @@ if __name__ == "__main__":
         ax1.set_ylim([5e-5, 2e-1])
         ax1.legend(prop={'size': 12})
         plt.show(block=False)
+
+
 
         asdf
 
